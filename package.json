@@ -1,7 +1,7 @@
 {
   "name": "create-mithril-lynx",
-  "version": "0.0.1",
-  "description": "Scaffolds a new mithril-lynx app — the Mithril.js analog of Lynx's official React hello-world template.",
+  "version": "0.0.2",
+  "description": "Scaffolds a new mithril-lynx app — Hello World, Blank, or Basic Activity (with navigation), in JavaScript or TypeScript.",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -17,9 +17,7 @@
   },
   "files": [
     "src",
-    "template-common",
-    "template-js",
-    "template-ts"
+    "templates"
   ],
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

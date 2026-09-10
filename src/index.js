@@ -10,7 +10,16 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.join(scriptDir, "..");
 const cwd = process.cwd();
 
-const MITHRIL_LYNX_VERSION = "0.0.1";
+// 0.0.2+ — "basic-activity" needs mithril-lynx/navigation, added after 0.0.1
+// was published.
+const MITHRIL_LYNX_VERSION = "0.0.2";
+
+const TEMPLATES = [
+	{ value: "hello-world", label: "Hello World", hint: "recommended" },
+	{ value: "blank", label: "Blank" },
+	{ value: "basic-activity", label: "Basic Activity", hint: "multi-screen navigation" },
+];
+const TEMPLATE_VALUES = TEMPLATES.map((t) => t.value);
 
 function isValidPackageName(name) {
 	return /^(?:@[a-z0-9-*~][a-z0-9-*._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/.test(name);
@@ -40,13 +49,14 @@ function targetDirHasConflict(value) {
 
 async function main() {
 	// Non-interactive escape hatch for scripting/CI:
-	//   create-mithril-lynx my-app --ts
-	//   create-mithril-lynx my-app --js --no-install
+	//   create-mithril-lynx my-app --ts --hello-world
+	//   create-mithril-lynx my-app --js --basic-activity --no-install
 	const args = process.argv.slice(2);
 	const positional = args.find((a) => !a.startsWith("-"));
 	const variantFlag = args.includes("--ts") ? "ts" : args.includes("--js") ? "js" : undefined;
+	const templateFlag = TEMPLATE_VALUES.find((t) => args.includes(`--${t}`));
 	const noInstall = args.includes("--no-install");
-	const nonInteractive = positional != null && variantFlag != null;
+	const nonInteractive = positional != null && variantFlag != null && templateFlag != null;
 
 	intro("create-mithril-lynx");
 
@@ -73,6 +83,15 @@ async function main() {
 		? rawName
 		: rawName.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-~]/g, "-");
 
+	let template = templateFlag;
+	if (template == null) {
+		template = await select({
+			message: "Select a template",
+			options: TEMPLATES,
+		});
+		if (isCancel(template)) return bail();
+	}
+
 	let variant = variantFlag;
 	if (variant == null) {
 		variant = await select({
@@ -88,8 +107,13 @@ async function main() {
 	const targetDir = path.join(cwd, rawName);
 	fs.mkdirSync(targetDir, { recursive: true });
 
-	copyDir(path.join(packageRoot, "template-common"), targetDir);
-	copyDir(path.join(packageRoot, `template-${variant}`), targetDir);
+	// Layered copy: shared build plumbing (gitignore/README, then
+	// lynx.config/tsconfig/main-thread for the chosen variant), then the
+	// chosen template's own app content (style.css/assets, then src/index).
+	copyDir(path.join(packageRoot, "templates/_shared/common"), targetDir);
+	copyDir(path.join(packageRoot, "templates/_shared", variant), targetDir);
+	copyDir(path.join(packageRoot, "templates", template, "common"), targetDir);
+	copyDir(path.join(packageRoot, "templates", template, variant), targetDir);
 
 	const gitignorePath = path.join(targetDir, "gitignore");
 	if (fs.existsSync(gitignorePath)) {
