@@ -1,0 +1,29 @@
+{
+  "name": "{{PROJECT_NAME}}",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "rspeedy dev",
+    "build": "rspeedy build",
+    "preview": "rspeedy preview"
+  },
+  "dependencies": {
+    "mithril": "2.3.8",
+    "mithril-lynx": "{{MITHRIL_LYNX_VERSION}}"
+  },
+  "devDependencies": {
+    "@lynx-js/config-rsbuild-plugin": "^0.2.0",
+    "@lynx-js/qrcode-rsbuild-plugin": "^0.7.0",
+    "@lynx-js/rspeedy": "^0.17.0",
+    "@lynx-js/template-webpack-plugin": "^0.16.0",
+    "@lynx-js/type-element-api": "0.0.9",
+    "@lynx-js/types": "4.1.0",
+    "@rsbuild/plugin-type-check": "^1.6.0",
+    "@types/mithril": "^2.2.9",
+    "typescript": "~5.9.0"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}
