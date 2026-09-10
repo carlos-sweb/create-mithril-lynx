@@ -4,6 +4,14 @@
   "description": "Scaffolds a new mithril-lynx app — the Mithril.js analog of Lynx's official React hello-world template.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/carlos-sweb/create-mithril-lynx.git"
+  },
+  "homepage": "https://github.com/carlos-sweb/create-mithril-lynx#readme",
+  "bugs": {
+    "url": "https://github.com/carlos-sweb/create-mithril-lynx/issues"
+  },
   "bin": {
     "create-mithril-lynx": "src/index.js"
   },
