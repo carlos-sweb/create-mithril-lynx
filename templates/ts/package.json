@@ -9,7 +9,7 @@
     "preview": "rspeedy preview"
   },
   "dependencies": {
-    "mithril-runtime": "github:carlos-sweb/mithril-runtime",
+    "mithril-runtime": "^1.0.0",
     "mithril-lynx-v2": "__MITHRIL_LYNX_V2_DEP__"
   },
   "devDependencies": {
