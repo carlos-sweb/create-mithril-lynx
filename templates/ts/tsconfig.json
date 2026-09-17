@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+
+    "target": "ES2022",
+    "lib": ["ES2023"]
+  },
+  "references": [
+    { "path": "./tsconfig.node.json" },
+    { "path": "./src" }
+  ],
+  "files": []
+}
