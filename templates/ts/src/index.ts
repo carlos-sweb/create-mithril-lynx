@@ -14,7 +14,7 @@
 //   (mithril-lynx-v2-desde-cero.md §3.6) holds, the input keeps its focus
 //   and in-progress text through that structural change.
 
-import m from "mithril";
+import m from "mithril-runtime";
 
 let active = true;
 

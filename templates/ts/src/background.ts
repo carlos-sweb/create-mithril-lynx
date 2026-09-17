@@ -9,7 +9,7 @@
 // src/commit.js), including the auto-redraw path this app's index.ts
 // relies on for its title tap.
 
-import m from "mithril";
+import m from "mithril-runtime";
 import { renderApp } from "mithril-lynx-v2/background";
 import * as indexModule from "./index.js";
 
