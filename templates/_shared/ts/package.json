@@ -1,5 +1,5 @@
 {
-  "name": "__APP_NAME__",
+  "name": "{{PROJECT_NAME}}",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "mithril-runtime": "^1.1.0",
-    "mithril-lynx": "^2.0.0"
+    "mithril-lynx": "{{MITHRIL_LYNX_VERSION}}"
   },
   "devDependencies": {
     "@lynx-js/config-rsbuild-plugin": "^0.2.0",

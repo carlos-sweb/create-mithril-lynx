@@ -10,13 +10,7 @@
   justify-content: center;
 }
 
-.TitleBlue {
+.Title {
   font-size: 24px;
   font-weight: 600;
-  color: blue;
-}
-.TitleRed {
-  font-size: 24px;
-  font-weight: 600;
-  color: red;
 }

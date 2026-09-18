@@ -2,9 +2,9 @@
 //
 // The stable-host pattern: `host` never changes identity across a
 // hot-update, so Mithril never unmounts/remounts it; `currentView` is a
-// live binding re-pointed by `module.hot.accept`, read fresh on every
-// redraw. This is what lets editing `index.ts` hot-reload in place
-// without losing an `<input>`'s focus or in-progress text.
+// live binding re-pointed by `module.hot.accept`. This is what lets
+// editing `index.ts` hot-reload in place without losing an `<input>`'s
+// focus or in-progress text.
 
 import m from "mithril-runtime";
 import { renderApp } from "mithril-lynx/background";

@@ -1,0 +1,59 @@
+:root {
+  background-color: #fff;
+}
+
+.Page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.AppBar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  background-color: #6200ee;
+}
+
+.AppBar-back {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  margin-right: 16px;
+  padding: 4px 8px;
+}
+
+.AppBar-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.Content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.Description {
+  font-size: 16px;
+  color: #333;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.Button {
+  padding: 12px 24px;
+  border-radius: 8px;
+  background-color: #6200ee;
+}
+
+.Button-label {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+}
