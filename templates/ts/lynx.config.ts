@@ -6,7 +6,7 @@ import { pluginQRCode } from "@lynx-js/qrcode-rsbuild-plugin";
 import { defineConfig } from "@lynx-js/rspeedy";
 import { pluginTypeCheck } from "@rsbuild/plugin-type-check";
 
-import { pluginMithrilLynxV2 } from "mithril-lynx-v2/plugin";
+import { pluginMithrilLynx } from "mithril-lynx/plugin";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,7 +26,7 @@ export default defineConfig({
 		dataUriLimit: Infinity,
 	},
 	plugins: [
-		pluginMithrilLynxV2(),
+		pluginMithrilLynx(),
 		pluginLynxConfig({ enableNewGesture: true, enableCSSRule: true }),
 		pluginQRCode({
 			schema(url) {

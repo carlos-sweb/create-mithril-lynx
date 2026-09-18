@@ -1,6 +1,6 @@
 # __APP_NAME__
 
-A [Lynx](https://lynxjs.org) app built with [Mithril.js](https://mithril.js.org), via [`mithril-lynx-v2`](../mithril-lynx-v2).
+A [Lynx](https://lynxjs.org) app built with [Mithril.js](https://mithril.js.org), via [`mithril-lynx`](https://github.com/carlos-sweb/mithril-lynx).
 
 ## Getting started
 
@@ -13,8 +13,8 @@ npm run build    # production bundle, in dist/
 ## How this app is structured
 
 - `src/main-thread.ts` — starts the main-thread patch-replay runtime
-  (`setupRenderer()`). No app code lives here — v2 has exactly one
-  rendering mode: the whole view runs in the background thread.
+  (`setupRenderer()`). No app code lives here — mithril-lynx has exactly
+  one rendering mode: the whole view runs in the background thread.
 - `src/background.ts` — the stable-host pattern: mounts the app once and
   wires `module.hot.accept("./index.js", ...)` so editing `index.ts`
   hot-reloads without losing focus/state in an `<input>` (see the reload
@@ -38,6 +38,6 @@ device or in Lynx Web:
   resets) — the same fallback that fires for a genuinely new dependency
   webpack's HMR runtime can't hot-swap.
 
-See `mithril-lynx-v2`'s own `AGENTS.md` and its
-`.omo/plans/mithril-lynx-v2-desde-cero.md` for the full design rationale
-and the device evidence behind these three modes.
+See [`mithril-lynx`](https://github.com/carlos-sweb/mithril-lynx)'s own
+README for the full design rationale and the device evidence behind
+these three modes.

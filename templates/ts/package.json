@@ -9,8 +9,8 @@
     "preview": "rspeedy preview"
   },
   "dependencies": {
-    "mithril-runtime": "^1.0.0",
-    "mithril-lynx-v2": "__MITHRIL_LYNX_V2_DEP__"
+    "mithril-runtime": "^1.1.0",
+    "mithril-lynx": "^2.0.0"
   },
   "devDependencies": {
     "@lynx-js/config-rsbuild-plugin": "^0.2.0",
