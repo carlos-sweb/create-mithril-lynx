@@ -2,7 +2,7 @@
 
 Scaffolds a new [`mithril-lynx`](https://github.com/carlos-sweb/mithril-lynx) app. Three templates, matching the "Hello World" / "Blank" / "Basic Activity" naming most native app scaffolds already use.
 
-It can also generate the **native Android host** — the whole Gradle project that wraps the bundle into an installable APK — so you never hand-write the ~20 Kotlin/Gradle/XML files that takes.
+It can also generate the **native Android host** — the whole Gradle project that wraps the bundle into an installable APK — so you never hand-write the ~20 Kotlin/Gradle/XML files that takes. That path automates [`mithril-lynx`'s ANDROID_APK_GUIDE.md](https://github.com/carlos-sweb/mithril-lynx/blob/main/ANDROID_APK_GUIDE.md).
 
 > **Note:** this is a complete rewrite of the previous `create-mithril-lynx`, matching [`mithril-lynx`'s own rewrite](https://github.com/carlos-sweb/mithril-lynx). The old tool's **Basic Activity** template used `mithril-lynx/navigation` (a stack-based, in-memory navigator) — that module doesn't exist in the new `mithril-lynx`, so this template was rewritten from scratch around [`mithril-lynx/route`](https://github.com/carlos-sweb/mithril-lynx/blob/main/ROUTE.md) instead. Everything else (Hello World, Blank, the Android host) ports over unchanged, since none of it depended on the part of the framework that got rewritten.
 
@@ -49,7 +49,7 @@ Every flag, in one table — `npx create-mithril-lynx --help` prints the same li
 | `--android` / `--target android` / `--target=android` / `target=android` | Also scaffold the sibling `<name>-android/` Gradle project. |
 | `--android-id <id>` | `applicationId` / `namespace` (default `com.example.<name>`). |
 | `--app-name <name>` | Launcher label (default: the project name). |
-| `--with-font <file.ttf>` | Copy the font into the host's assets, generate `AssetFontFaceLoader.kt`, and wire the cold-start `prefetchFont()` hack. |
+| `--with-font <file.ttf>` | Copy the font into the host's assets, generate `AssetFontFaceLoader.kt`, and wire the cold-start `prefetchFont()` hack (Part D of the guide). |
 | `--font-family <name>` | Override the family name derived from the font's file name. Only meaningful with `--with-font`. |
 
 Anything not listed — in particular the four Android flags — requires `--android`
