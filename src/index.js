@@ -132,6 +132,16 @@ function fontFamilyFor(filePath) {
 		.join(" ");
 }
 
+/** A valid JS identifier (camelCase, "Font" suffix) for a font-family string. */
+function jsIdentifierFor(family) {
+	const words = family.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+	const camel = words
+		.map((word, i) => (i === 0 ? word[0].toLowerCase() + word.slice(1) : word[0].toUpperCase() + word.slice(1)))
+		.join("");
+	const safe = /^[0-9]/.test(camel) ? `f${camel}` : camel;
+	return `${safe || "font"}Font`;
+}
+
 function xmlEscape(value) {
 	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
@@ -192,15 +202,6 @@ function findPositional(args) {
 		return arg;
 	}
 	return undefined;
-}
-
-/** Indents every non-empty line of a generated block. */
-function indent(block, spaces) {
-	const pad = " ".repeat(spaces);
-	return block
-		.split("\n")
-		.map((line) => (line === "" ? line : pad + line))
-		.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +278,6 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 	const androidDir = path.join(path.dirname(targetDir), androidDirName);
 	const appClass = appClassNameFor(rawName);
 	const packagePath = androidId.split(".").join(path.sep);
-	const packageDir = path.join(androidDir, "app", "src", "main", "java", packagePath);
 
 	// 1. Copy the Gradle skeleton and the Kotlin app. `package-path` expands to
 	//    the real package path, and App.kt is renamed after its class.
@@ -297,19 +297,15 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 		// best-effort
 	}
 
-	// 2. The .ttf is opt-in: without it neither the loader nor the prefetch is
-	//    generated, so no dead code is left behind.
-	if (font != null) {
-		const fontsDir = path.join(androidDir, "app", "src", "main", "assets", "fonts");
-		fs.mkdirSync(fontsDir, { recursive: true });
-		fs.copyFileSync(font.sourcePath, path.join(fontsDir, font.file));
-
-		fs.copyFileSync(
-			path.join(ANDROID_TEMPLATE_ROOT, "font", "AssetFontFaceLoader.kt"),
-			path.join(packageDir, "AssetFontFaceLoader.kt"),
-		);
-	}
-
+	// 2. Fonts need no native code at all: lynx.config.ts's dataUriLimit:
+	//    Infinity (see templates/_shared/ts/lynx.config.ts) already inlines
+	//    any imported .ttf as a data: URI, and lynx.addFont() resolves a
+	//    data: URI on every host with no registration — confirmed on device
+	//    (a stock generated Android host, with no custom Loader/fetcher of
+	//    any kind, renders the font correctly) and with no cold-start cost
+	//    (three-run A/B on the same device: 724-745ms with the font vs.
+	//    715-826ms without — indistinguishable). See patchJsProject() for
+	//    where the font actually gets wired up (entirely JS-side).
 	const sdkDir = findAndroidSdk();
 
 	// 3. Text substitutions across the whole Android host (skipping the
@@ -327,54 +323,7 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 		],
 	]);
 
-	// 4. The four font-hack hooks: either the real code, or nothing at all.
-	const sourceUri = font != null ? `asset:///fonts/${font.file}` : undefined;
-	const fontLoaderImport = font != null ? "import com.lynx.tasm.loader.LynxFontFaceLoader\n" : "";
-	const fontLoaderRegistration =
-		font != null
-			? `${indent(
-					[
-						"// Must run BEFORE LynxEnv.inst().init(): this is what makes",
-						'// "asset:///" resolvable, both for prefetchFont() and for the',
-						"// real @font-face resolution during the first layout.",
-						"LynxFontFaceLoader.setLoader(AssetFontFaceLoader)",
-					].join("\n"),
-					8,
-				)}\n\n`
-			: "";
-	const fontImport = font != null ? "import com.lynx.tasm.fontface.FontFaceManager\n" : "";
-	const fontPrefetch =
-		font != null
-			? `${indent(
-					[
-						"// Warms the Typeface on Lynx's own IO thread pool, before",
-						"// renderTemplateUrl() gives the bundle's CSS a chance to resolve",
-						"// @font-face during the first layout. FontFaceManager caches by the",
-						"// exact src string, so this URI has to be identical to the",
-						'// url("...") of the @font-face in src/style.css.',
-						"FontFaceManager.getInstance().prefetchFont(",
-						"    lynxView.lynxContext,",
-						`    "${sourceUri}",`,
-						"    null,",
-						"    object : FontFaceManager.FontFacePrefetchListener {",
-						"        override fun onComplete(code: Int, msg: String) {}",
-						"    },",
-						")",
-					].join("\n"),
-					8,
-				)}\n\n`
-			: "";
-
-	for (const kt of walkFiles(packageDir)) {
-		replaceInFile(kt, [
-			["// {{FONT_LOADER_IMPORT}}\n", fontLoaderImport],
-			["        // {{FONT_LOADER_REGISTRATION}}\n", fontLoaderRegistration],
-			["// {{FONT_IMPORT}}\n", fontImport],
-			["        // {{FONT_PREFETCH}}\n", fontPrefetch],
-		]);
-	}
-
-	// 5. The script that joins the two halves, inside the JS project.
+	// 4. The script that joins the two halves, inside the JS project.
 	const scriptsDir = path.join(targetDir, "scripts");
 	fs.mkdirSync(scriptsDir, { recursive: true });
 	fs.copyFileSync(path.join(ANDROID_TEMPLATE_ROOT, "app-scripts", "android.mjs"), path.join(scriptsDir, "android.mjs"));
@@ -405,23 +354,46 @@ function patchJsProject({ targetDir, android }) {
 	};
 	fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
-	// style.css: the @font-face that has to match the Android host's
-	// prefetchFont() byte for byte.
+	// The font: entirely JS-side, no native code, no @font-face.
+	//
+	// - The .ttf goes into the JS project itself (src/assets/fonts/), so the
+	//   bundler can import it. templates/_shared/ts/lynx.config.ts already
+	//   sets `dataUriLimit: Infinity`, which inlines that import as a
+	//   `data:font/ttf;base64,...` URI directly in the bundle — no separate
+	//   file, no asset-path puzzle to solve for a packaged native host.
+	// - lynx.addFont() (not @font-face) registers it, called from
+	//   background.ts. A data: URI resolves the same way on every host —
+	//   confirmed on a real device with a stock generated Android host (no
+	//   AssetFontFaceLoader, no custom resource fetcher) and with LynxExplorer/
+	//   Lynx Go, with no cold-start cost (a three-run A/B on the same device
+	//   measured 724-745ms with the font vs. 715-826ms without —
+	//   indistinguishable; the old +1-2s regression was specific to
+	//   @font-face's forced synchronous resolution, which doesn't apply here).
 	if (android.font != null) {
-		const cssPath = path.join(targetDir, "src", "style.css");
-		const block = [
-			"/* The font lives in the Android host's assets",
-			"   (app/src/main/assets/fonts/), not in the bundle. The asset:///",
-			"   string has to be identical to the one in MainActivity.kt's prefetchFont()",
-			"   or Lynx won't find the warmed Typeface. */",
-			"@font-face {",
-			`  font-family: "${android.font.family}";`,
-			`  src: url("asset:///fonts/${android.font.file}");`,
-			"}",
+		const { family, sourcePath, file } = android.font;
+		const fontsDir = path.join(targetDir, "src", "assets", "fonts");
+		fs.mkdirSync(fontsDir, { recursive: true });
+		fs.copyFileSync(sourcePath, path.join(fontsDir, file));
+
+		const varName = jsIdentifierFor(family);
+		const bgPath = path.join(targetDir, "src", "background.ts");
+		const fontBlock = [
+			`// Font: "${family}", bundled from src/assets/fonts/${file}. lynx.addFont()`,
+			"// registers it directly — dataUriLimit: Infinity (lynx.config.ts) inlines",
+			"// the import as a data: URI, which resolves the same way on every host,",
+			"// no native code needed.",
+			`import ${varName} from "./assets/fonts/${file}";`,
+			`lynx.addFont({ "font-family": "${family}", src: \`url("\${${varName}}")\` }, () => {});`,
+			"",
 			"",
 		].join("\n");
-		const existing = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : "";
-		fs.writeFileSync(cssPath, `${block}\n${existing}`);
+		const existingBg = fs.existsSync(bgPath) ? fs.readFileSync(bgPath, "utf8") : "";
+		fs.writeFileSync(bgPath, `${fontBlock}${existingBg}`);
+
+		const cssPath = path.join(targetDir, "src", "style.css");
+		const cssBlock = [`text {`, `  font-family: "${family}", sans-serif;`, `}`, ""].join("\n");
+		const existingCss = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : "";
+		fs.writeFileSync(cssPath, `${cssBlock}\n${existingCss}`);
 	}
 
 	// README: how the two halves are used together.
@@ -446,7 +418,7 @@ function patchJsProject({ targetDir, android }) {
 			`- Application ID: \`${android.androidId}\``,
 			`- Application class: \`${android.appClass}\` · Activity: \`MainActivity\``,
 			...(android.font != null
-				? [`- Font \`${android.font.family}\` prefetched from \`asset:///fonts/${android.font.file}\` (the cold-start hack).`]
+				? [`- Font \`${android.font.family}\` loaded via \`lynx.addFont()\` from \`src/assets/fonts/${android.font.file}\` (bundled as a data: URI — no native code involved).`]
 				: []),
 			"",
 		].join("\n");
@@ -471,9 +443,9 @@ Android host:
                             scaffold the sibling Gradle project <name>-android/
   --android-id <id>         applicationId / namespace (default com.example.<name>)
   --app-name <name>         launcher label (default: the project name)
-  --with-font <file.ttf>    copy the font into the host's assets, generate
-                            AssetFontFaceLoader.kt, and wire up the prefetchFont()
-                            call that avoids the slow cold start
+  --with-font <file.ttf>    bundle the font into the JS project and register it
+                            with lynx.addFont() (works on every host, no native
+                            code — see README)
   --font-family <name>      override the family name derived from the file name
 
 Other:
@@ -626,8 +598,8 @@ async function main() {
 					`${androidDirName}/local.properties (sdk.dir=...).`
 				: `Android SDK found at ${sdkDir}.`,
 			font != null
-				? `Font "${font.family}" prefetched from asset:///fonts/${font.file} (the cold-start hack).`
-				: "No custom font — pass --with-font <file.ttf> to include the prefetch hack.",
+				? `Font "${font.family}" bundled and registered via lynx.addFont() — works on every host.`
+				: "No custom font — pass --with-font <file.ttf> to bundle one.",
 		];
 		outro(`Done! Next steps:\n\n  ${steps.join("\n  ")}\n\n${notes.join("\n")}`);
 		return;

@@ -49,7 +49,7 @@ Every flag, in one table — `npx create-mithril-lynx --help` prints the same li
 | `--android` / `--target android` / `--target=android` / `target=android` | Also scaffold the sibling `<name>-android/` Gradle project. |
 | `--android-id <id>` | `applicationId` / `namespace` (default `com.example.<name>`). |
 | `--app-name <name>` | Launcher label (default: the project name). |
-| `--with-font <file.ttf>` | Copy the font into the host's assets, generate `AssetFontFaceLoader.kt`, and wire the cold-start `prefetchFont()` hack (Part D of the guide). |
+| `--with-font <file.ttf>` | Bundle the font into `src/assets/fonts/` and register it with `lynx.addFont()`. No native code: the import is inlined as a `data:` URI (`dataUriLimit: Infinity` in `lynx.config.ts`), which resolves the same way on every host — the real APK, LynxExplorer, or Lynx Go. Confirmed on device: no cold-start cost either (~730ms with the font vs. ~770ms without, on the same device). |
 | `--font-family <name>` | Override the family name derived from the font's file name. Only meaningful with `--with-font`. |
 
 Anything not listed — in particular the four Android flags — requires `--android`
@@ -61,7 +61,7 @@ The sibling `<name>-android/` project is a complete, no-Android-Studio Gradle CL
 
 - the Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`), so nothing needs to be installed besides a JDK and the Android SDK;
 - `local.properties` with `sdk.dir` auto-detected from `ANDROID_HOME`/`ANDROID_SDK_ROOT` (with a written warning if it can't be found);
-- the Kotlin host: the `Application`, `MainActivity` (async `AssetTemplateProvider`, splash screen), and the font loader when `--with-font` is used;
+- the Kotlin host: the `Application`, `MainActivity` (async `AssetTemplateProvider`, splash screen) — no font-specific code needed, `--with-font` is entirely JS-side;
 - resource files that compile as-is (theme, splash theme, adaptive launcher icon);
 - an opt-in release signing setup driven by a gitignored `keystore.properties`.
 
@@ -107,13 +107,12 @@ create-mithril-lynx/
       ts/src/{app-bar.ts, background.ts, screens/{home,detail}.ts}
     android/                 only used with --android
       host/                  the Gradle project -> <name>-android/
-      font/AssetFontFaceLoader.kt   copied only when --with-font is used
       app-scripts/android.mjs       the bridge -> <name>/scripts/android.mjs
 ```
 
 `src/index.js` copies, in order, `templates/_shared/common` → `templates/_shared/ts` → `templates/<template>/common` → `templates/<template>/ts` into the target directory — later copies overwrite same-named files from earlier ones, which is exactly how **Basic Activity**'s own routing-based `src/background.ts` replaces `_shared/ts`'s generic single-view one (Hello World and Blank don't ship their own, so they keep the shared file). It then renames `gitignore` to `.gitignore` (npm doesn't publish dotfiles reliably otherwise) and replaces `{{PROJECT_NAME}}`/`{{MITHRIL_LYNX_VERSION}}` placeholders in `package.json` and `README.md`.
 
-With `--android` it then copies `templates/android/host` into a sibling `<name>-android/` (renaming `package-path` to the real package directory and `App.kt` to the Application class), substitutes `{{PACKAGE_NAME}}`, `{{APP_CLASS}}`, `{{APP_NAME}}`, `{{ANDROID_DIR}}` and `{{SDK_DIR}}` across the tree, and fills in the four font-hack hooks (`{{FONT_LOADER_IMPORT}}`, `{{FONT_LOADER_REGISTRATION}}`, `{{FONT_IMPORT}}`, `{{FONT_PREFETCH}}`) with either the real code or nothing at all. Binary files (the Gradle wrapper jar, the `.ttf`) are never text-substituted.
+With `--android` it then copies `templates/android/host` into a sibling `<name>-android/` (renaming `package-path` to the real package directory and `App.kt` to the Application class) and substitutes `{{PACKAGE_NAME}}`, `{{APP_CLASS}}`, `{{APP_NAME}}`, `{{ANDROID_DIR}}` and `{{SDK_DIR}}` across the tree. Binary files (the Gradle wrapper jar, a `--with-font` `.ttf`) are never text-substituted. With `--with-font`, the font itself is copied into the *JS* project (`src/assets/fonts/`) and wired up with `lynx.addFont()` in `src/background.ts` plus a `text { font-family: ... }` rule in `src/style.css` — the Android host needs no font-specific code at all (see the `--with-font` row above).
 
 **Not carried over from v1 (yet)**: the JavaScript variant. The old tool generated either TypeScript or JavaScript for every template; this rewrite ships TypeScript only for now — doubling every template for a parallel JS copy wasn't part of this pass.
 

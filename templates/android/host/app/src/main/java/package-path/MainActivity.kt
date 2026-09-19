@@ -5,7 +5,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.lynx.tasm.LynxViewBuilder
 import com.lynx.tasm.ThreadStrategyForRendering
-// {{FONT_IMPORT}}
 import com.lynx.xelement.XElementBehaviors
 
 class MainActivity : AppCompatActivity() {
@@ -28,7 +27,6 @@ class MainActivity : AppCompatActivity() {
         val lynxView = builder.build(this)
         setContentView(lynxView)
 
-        // {{FONT_PREFETCH}}
         // The bundle lives in app/src/main/assets/main-thread.bundle, copied
         // there by `npm run android` (scripts/android.mjs) from the JS
         // project's dist/. The name has to match exactly.

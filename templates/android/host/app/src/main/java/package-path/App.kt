@@ -3,7 +3,6 @@ package {{PACKAGE_NAME}}
 import android.app.Application
 import com.lynx.service.log.LynxLogService
 import com.lynx.tasm.LynxEnv
-// {{FONT_LOADER_IMPORT}}
 import com.lynx.tasm.service.LynxServiceCenter
 
 class {{APP_CLASS}} : Application() {
@@ -17,7 +16,6 @@ class {{APP_CLASS}} : Application() {
         LynxServiceCenter.inst().registerService(LynxLogService)
         LynxLogService.switchLogToSystem(true)
 
-        // {{FONT_LOADER_REGISTRATION}}
         LynxEnv.inst().init(this, null, null, null)
     }
 }
