@@ -50,10 +50,27 @@ Every flag, in one table — `npx create-mithril-lynx --help` prints the same li
 | `--android-id <id>` | `applicationId` / `namespace` (default `com.example.<name>`). |
 | `--app-name <name>` | Launcher label (default: the project name). |
 | `--with-font <file.ttf>` | Bundle the font into `src/assets/fonts/` and register it with `lynx.addFont()`. No native code: the import is inlined as a `data:` URI (`dataUriLimit: Infinity` in `lynx.config.ts`), which resolves the same way on every host — the real APK, LynxExplorer, or Lynx Go. Confirmed on device: no cold-start cost either (~730ms with the font vs. ~770ms without, on the same device). |
-| `--font-family <name>` | Override the family name derived from the font's file name. Only meaningful with `--with-font`. |
+| `--find-font <term>` | Search [Fontsource](https://fontsource.org)'s catalog for `<term>`, prompt you to pick a family and a weight/style, download that one `.ttf`, and bundle it exactly like `--with-font`. Needs a real terminal (the picking is inherently interactive — use `--with-font <file.ttf>` in scripts/CI). Mutually exclusive with `--with-font`. |
+| `--font-family <name>` | Override the family name derived from the font's file name (or from Fontsource, with `--find-font`). Only meaningful with `--with-font`/`--find-font`. |
 
 Anything not listed — in particular the four Android flags — requires `--android`
-(or one of its aliases); `--with-font` implies it on its own.
+(or one of its aliases); `--with-font`/`--find-font` imply it on their own.
+
+### `--find-font`, in more detail
+
+Fontsource's own API (`api.fontsource.org`) has no free-text search — only
+exact `id`/`family` filters — so `--find-font` downloads the whole font list
+once (~2100 fonts, ~540KB as of 2026-09), caches it for 24h in the OS temp
+directory, and filters client-side on `family`/`id` substrings. Picking a
+family fetches that font's own detail (its real weight/style/subset `.ttf`
+URLs), lets you pick one variant (defaulting to 400/normal if available),
+downloads it to a temp file, and hands it to the same code path
+`--with-font <file>` uses — there's no separate font-loading mechanism to
+maintain.
+
+```bash
+npx create-mithril-lynx my-app --blank --android --find-font Inter
+```
 
 ### What the generated Android host gives you
 
@@ -90,6 +107,7 @@ This part of the tool is framework-agnostic — it just wraps whatever bundle `r
 ```
 create-mithril-lynx/
   src/index.js              the CLI itself
+  src/fontsource.js         --find-font: local search over Fontsource's catalog
   templates/
     _shared/
       common/                gitignore, project README — shared by every template

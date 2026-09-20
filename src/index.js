@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 
-import { cancel, confirm, intro, isCancel, outro, select, text } from "@clack/prompts";
+import { cancel, confirm, intro, isCancel, outro, select, spinner, text } from "@clack/prompts";
+
+import { fetchFontDetail, fetchFontList, listVariants, searchFonts } from "./fontsource.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.join(scriptDir, "..");
@@ -183,12 +186,20 @@ function parseAndroidArgs(args) {
 		appName: readOption(args, "app-name"),
 		fontPath: readOption(args, "with-font"),
 		fontFamily: readOption(args, "font-family"),
+		findFontTerm: readOption(args, "find-font"),
 	};
 }
 
 // Options that consume the following argument, so that value is never mistaken
 // for the project name (e.g. `--with-font ./UbuntuMono.ttf`).
-const OPTIONS_WITH_VALUE = new Set(["--target", "--android-id", "--app-name", "--with-font", "--font-family"]);
+const OPTIONS_WITH_VALUE = new Set([
+	"--target",
+	"--android-id",
+	"--app-name",
+	"--with-font",
+	"--font-family",
+	"--find-font",
+]);
 
 function findPositional(args) {
 	for (let i = 0; i < args.length; i++) {
@@ -198,10 +209,118 @@ function findPositional(args) {
 			continue;
 		}
 		if (arg === "target=android") continue;
-		if (/^(?:target|android-id|app-name|with-font|font-family)=/.test(arg)) continue;
+		if (/^(?:target|android-id|app-name|with-font|font-family|find-font)=/.test(arg)) continue;
 		return arg;
 	}
 	return undefined;
+}
+
+const WEIGHT_NAMES = {
+	100: "Thin",
+	200: "Extra Light",
+	300: "Light",
+	400: "Regular",
+	500: "Medium",
+	600: "Semi Bold",
+	700: "Bold",
+	800: "Extra Bold",
+	900: "Black",
+};
+
+function variantLabel(variant) {
+	const weightName = WEIGHT_NAMES[variant.weight] ?? String(variant.weight);
+	const style = variant.style === "italic" ? " Italic" : "";
+	return `${weightName}${style} (${variant.weight} ${variant.style})`;
+}
+
+/**
+ * Interactive search-download flow for `--find-font <term>`: queries
+ * Fontsource's catalog locally (see src/fontsource.js — the API itself has
+ * no free-text search), lets the user pick a family and one weight/style,
+ * downloads that .ttf to a temp file, and returns it in the same shape
+ * `--with-font <file>` expects, so the rest of the pipeline (entirely
+ * JS-side — see patchJsProject()) doesn't need to know which path was used.
+ */
+async function findFontInteractively(term) {
+	// Unlike the other prompts in this file, this one isn't skippable by
+	// supplying enough flags up front — picking a family and a variant out
+	// of a search result is inherently interactive. Gate on the terminal
+	// itself, not on whether name/template were also given.
+	if (!process.stdin.isTTY) {
+		cancel("--find-font needs an interactive terminal to pick a family and variant — use --with-font <file.ttf> in scripts/CI.");
+		process.exit(1);
+	}
+
+	const s = spinner();
+	s.start(`Searching Fontsource for "${term}"…`);
+	let list;
+	try {
+		list = await fetchFontList();
+	} catch (error) {
+		s.stop("Search failed.");
+		cancel(error instanceof Error ? error.message : String(error));
+		process.exit(1);
+	}
+	const matches = searchFonts(list, term);
+	s.stop(`${matches.length} match(es) for "${term}".`);
+
+	if (matches.length === 0) {
+		cancel(`No Fontsource font matches "${term}". Try a different search, or use --with-font <file.ttf> for a font you already have.`);
+		process.exit(1);
+	}
+
+	const chosenId = await select({
+		message: "Which font?",
+		options: matches.map((f) => ({
+			value: f.id,
+			label: f.family,
+			hint: `${f.category}${f.variable ? ", variable" : ""} · ${f.license}`,
+		})),
+	});
+	if (isCancel(chosenId)) return null;
+
+	const s2 = spinner();
+	s2.start("Fetching variants…");
+	let detail;
+	try {
+		detail = await fetchFontDetail(chosenId);
+	} catch (error) {
+		s2.stop("Failed.");
+		cancel(error instanceof Error ? error.message : String(error));
+		process.exit(1);
+	}
+	const allVariants = listVariants(detail);
+	const variants = allVariants.filter((v) => v.subset === "latin");
+	s2.stop(`${variants.length || allVariants.length} variant(s) available.`);
+
+	const pickFrom = variants.length > 0 ? variants : allVariants;
+	const chosenVariant = await select({
+		message: "Which weight/style?",
+		initialValue: pickFrom.find((v) => v.weight === 400 && v.style === "normal") ?? pickFrom[0],
+		options: pickFrom.map((v) => ({ value: v, label: variantLabel(v) })),
+	});
+	if (isCancel(chosenVariant)) return null;
+
+	const s3 = spinner();
+	s3.start(`Downloading ${detail.family} ${variantLabel(chosenVariant)}…`);
+	let bytes;
+	try {
+		const response = await fetch(chosenVariant.url);
+		if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
+		bytes = Buffer.from(await response.arrayBuffer());
+	} catch (error) {
+		s3.stop("Download failed.");
+		cancel(error instanceof Error ? error.message : String(error));
+		process.exit(1);
+	}
+	const tempFile = path.join(
+		os.tmpdir(),
+		`${chosenId}-${chosenVariant.weight}-${chosenVariant.style}-${chosenVariant.subset}.ttf`,
+	);
+	fs.writeFileSync(tempFile, bytes);
+	s3.stop(`Downloaded ${(bytes.length / 1024).toFixed(1)} kB.`);
+
+	return { sourcePath: tempFile, family: detail.family };
 }
 
 // ---------------------------------------------------------------------------
@@ -247,8 +366,21 @@ async function resolveAndroidOptions(android, { rawName, projectName, canPrompt 
 	}
 	appName = appName ?? path.basename(rawName);
 
+	if (android.fontPath != null && android.findFontTerm != null) {
+		cancel("--with-font and --find-font are mutually exclusive — pick one.");
+		process.exit(1);
+	}
+
 	let font = null;
-	if (android.fontPath != null) {
+	if (android.findFontTerm != null) {
+		const found = await findFontInteractively(android.findFontTerm);
+		if (found == null) return null;
+		font = {
+			sourcePath: found.sourcePath,
+			file: path.basename(found.sourcePath),
+			family: android.fontFamily ?? found.family,
+		};
+	} else if (android.fontPath != null) {
 		const resolved = path.resolve(cwd, android.fontPath);
 		if (!fs.existsSync(resolved)) {
 			cancel(`Font file not found: ${android.fontPath}`);
@@ -264,7 +396,7 @@ async function resolveAndroidOptions(android, { rawName, projectName, canPrompt 
 			family: android.fontFamily ?? fontFamilyFor(resolved),
 		};
 	} else if (android.fontFamily != null) {
-		cancel("--font-family only makes sense together with --with-font.");
+		cancel("--font-family only makes sense together with --with-font or --find-font.");
 		process.exit(1);
 	}
 
@@ -446,6 +578,9 @@ Android host:
   --with-font <file.ttf>    bundle the font into the JS project and register it
                             with lynx.addFont() (works on every host, no native
                             code — see README)
+  --find-font <term>        search Fontsource (fontsource.org) for a font,
+                            pick a family and a weight/style interactively,
+                            and bundle it the same way as --with-font
   --font-family <name>      override the family name derived from the file name
 
 Other:
@@ -472,9 +607,9 @@ async function main() {
 	const nonInteractive = positional != null && templateFlag != null;
 	const android = parseAndroidArgs(args);
 
-	// --with-font/--font-family only make sense with an Android host: imply it
-	// rather than ignoring them silently.
-	if (android.fontPath != null || android.fontFamily != null) {
+	// --with-font/--find-font/--font-family only make sense with an Android
+	// host: imply it rather than ignoring them silently.
+	if (android.fontPath != null || android.findFontTerm != null || android.fontFamily != null) {
 		android.requested = true;
 	}
 
