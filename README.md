@@ -49,12 +49,33 @@ Every flag, in one table — `npx create-mithril-lynx --help` prints the same li
 | `--android` / `--target android` / `--target=android` / `target=android` | Also scaffold the sibling `<name>-android/` Gradle project. |
 | `--android-id <id>` | `applicationId` / `namespace` (default `com.example.<name>`). |
 | `--app-name <name>` | Launcher label (default: the project name). |
-| `--with-font <file.ttf>` | Bundle the font into `src/assets/fonts/` and register it with `lynx.addFont()`. No native code: the import is inlined as a `data:` URI (`dataUriLimit: Infinity` in `lynx.config.ts`), which resolves the same way on every host — the real APK, LynxExplorer, or Lynx Go. Confirmed on device: no cold-start cost either (~730ms with the font vs. ~770ms without, on the same device). |
-| `--find-font <term>` | Search [Fontsource](https://fontsource.org)'s catalog for `<term>`, prompt you to pick a family and a weight/style, download that one `.ttf`, and bundle it exactly like `--with-font`. Needs a real terminal (the picking is inherently interactive — use `--with-font <file.ttf>` in scripts/CI). Mutually exclusive with `--with-font`. |
-| `--font-family <name>` | Override the family name derived from the font's file name (or from Fontsource, with `--find-font`). Only meaningful with `--with-font`/`--find-font`. |
+| `--with-font <file.ttf>` | Bundle the font into `src/assets/fonts/` and register it with `lynx.addFont()`. No native code: the import is inlined as a `data:` URI (`dataUriLimit: Infinity` in `lynx.config.ts`), which resolves the same way on every host — the real APK, LynxExplorer, or Lynx Go. Confirmed on device: no cold-start cost either (~730ms with the font vs. ~770ms without, on the same device). Comma-separate for more than one file. |
+| `--find-font <term>` | Search [Fontsource](https://fontsource.org)'s catalog for `<term>`, prompt you to pick a family and a weight/style, download that one `.ttf`, and bundle it exactly like `--with-font`. Needs a real terminal (the picking is inherently interactive — use `--with-font <file.ttf>` in scripts/CI). Mutually exclusive with `--with-font`. Comma-separate terms for more than one — quote the whole thing if any term has a space. |
+| `--font-family <name>` | Override the family name derived from the font's file name (or from Fontsource, with `--find-font`). Only valid with exactly one font. |
 
 Anything not listed — in particular the four Android flags — requires `--android`
 (or one of its aliases); `--with-font`/`--find-font` imply it on their own.
+
+### More than one font
+
+Both flags take a comma-separated list — useful for a body font plus a
+monospace one for code, for example:
+
+```bash
+npx create-mithril-lynx my-app --blank --android --find-font "Inter,JetBrains Mono"
+```
+
+Each font gets its own `import`/`lynx.addFont()` call in `src/background.ts`.
+Only the **first** one gets the automatic `text { font-family: ...; }` rule
+in `src/style.css` (there's no way for the CLI to guess which elements
+should use which font past that) — the rest are registered and ready to use,
+but you assign them to your own classes by hand, e.g.:
+
+```css
+.code {
+  font-family: "JetBrains Mono", monospace;
+}
+```
 
 ### `--find-font`, in more detail
 
