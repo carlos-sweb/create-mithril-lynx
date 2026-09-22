@@ -8,6 +8,17 @@ import { execSync } from "node:child_process";
 import { cancel, confirm, intro, isCancel, outro, select, spinner, text } from "@clack/prompts";
 
 import { fetchFontDetail, fetchFontList, listVariants, searchFonts } from "./fontsource.js";
+import {
+	applyBackgroundFonts,
+	applyCssDefaultFont,
+	buildCssFontBlock,
+	buildFontBlock,
+	copyFontFiles,
+	findAndroidDir,
+	findProjectRoot,
+	mergeFontLists,
+	stripFontBlock,
+} from "./fonts-wire.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.join(scriptDir, "..");
@@ -160,16 +171,6 @@ function dedupeFontFiles(fonts) {
 		seen.add(file);
 		font.file = file;
 	}
-}
-
-/** A valid JS identifier (camelCase, "Font" suffix) for a font-family string. */
-function jsIdentifierFor(family) {
-	const words = family.split(/[^a-zA-Z0-9]+/).filter(Boolean);
-	const camel = words
-		.map((word, i) => (i === 0 ? word[0].toLowerCase() + word.slice(1) : word[0].toUpperCase() + word.slice(1)))
-		.join("");
-	const safe = /^[0-9]/.test(camel) ? `f${camel}` : camel;
-	return `${safe || "font"}Font`;
 }
 
 function xmlEscape(value) {
@@ -393,24 +394,44 @@ async function resolveAndroidOptions(android, { rawName, projectName, canPrompt 
 	}
 	appName = appName ?? path.basename(rawName);
 
+	const fonts = await resolveFontsFromFlags(android, { baseDir: cwd, requireFonts: false });
+	if (fonts == null) return null;
+
+	return { androidId, appName, fonts };
+}
+
+/**
+ * Shared by scaffold and `add-font`: resolve --with-font / --find-font /
+ * --font-family into `{ sourcePath, file, family }[]`. Returns null if the
+ * interactive --find-font flow was cancelled; exits on hard errors.
+ * When `requireFonts` is false (scaffold without --with-font), returns [].
+ */
+async function resolveFontsFromFlags(android, { baseDir, requireFonts }) {
 	if (android.fontPath != null && android.findFontTerm != null) {
 		cancel("--with-font and --find-font are mutually exclusive — pick one.");
 		process.exit(1);
 	}
 
-	// Both flags accept a comma-separated list, so more than one font (e.g.
-	// a body font and a monospace one for code) can be bundled in one run.
 	const fontPaths = android.fontPath != null ? splitList(android.fontPath) : [];
 	const findFontTerms = android.findFontTerm != null ? splitList(android.findFontTerm) : [];
 	const fontCount = fontPaths.length + findFontTerms.length;
 
 	if (android.fontFamily != null && fontCount > 1) {
-		cancel("--font-family only makes sense with exactly one font — omit it when bundling more than one, or edit src/style.css/background.ts by hand afterwards.");
+		cancel(
+			"--font-family only makes sense with exactly one font — omit it when bundling more than one, or edit src/style.css/background.ts by hand afterwards.",
+		);
 		process.exit(1);
 	}
 	if (android.fontFamily != null && fontCount === 0) {
 		cancel("--font-family only makes sense together with --with-font or --find-font.");
 		process.exit(1);
+	}
+	if (fontCount === 0) {
+		if (requireFonts) {
+			cancel("Pass --with-font <file.ttf> or --find-font <term> (comma-separate for more than one).");
+			process.exit(1);
+		}
+		return [];
 	}
 
 	const fonts = [];
@@ -424,7 +445,7 @@ async function resolveAndroidOptions(android, { rawName, projectName, canPrompt 
 		});
 	}
 	for (const rawPath of fontPaths) {
-		const resolved = path.resolve(cwd, rawPath);
+		const resolved = path.resolve(baseDir, rawPath);
 		if (!fs.existsSync(resolved)) {
 			cancel(`Font file not found: ${rawPath}`);
 			process.exit(1);
@@ -440,8 +461,111 @@ async function resolveAndroidOptions(android, { rawName, projectName, canPrompt 
 		});
 	}
 	dedupeFontFiles(fonts);
+	return fonts;
+}
 
-	return { androidId, appName, fonts };
+function printManualBlock(title, block) {
+	console.log("");
+	console.log(`  ${title}`);
+	console.log("  ────────────────────────────────────────");
+	for (const line of block.replace(/\n$/, "").split("\n")) {
+		console.log(`  ${line}`);
+	}
+	console.log("  ────────────────────────────────────────");
+	console.log("");
+}
+
+/**
+ * Post-init: add one or more fonts to an existing mithril-lynx project.
+ * Always copies the files; patches background.ts / style.css only when they
+ * still match the stock template (optionally with our FONTS block on top).
+ */
+async function runAddFont(args) {
+	intro("create-mithril-lynx add-font");
+
+	const android = parseAndroidArgs(args);
+	if (android.fontPath == null && android.findFontTerm == null) {
+		cancel("Pass --with-font <file.ttf> or --find-font <term>.");
+		process.exit(1);
+	}
+
+	const projectRoot = findProjectRoot(cwd);
+	if (projectRoot == null) {
+		cancel(
+			"No mithril-lynx project found here (need lynx.config.ts + src/background.ts).\n" +
+				"    cd into the app directory and try again.",
+		);
+		process.exit(1);
+	}
+
+	const incoming = await resolveFontsFromFlags(android, { baseDir: cwd, requireFonts: true });
+	if (incoming == null) return;
+
+	const bgPath = path.join(projectRoot, "src", "background.ts");
+	const { fonts: existingInBg } = stripFontBlock(
+		fs.existsSync(bgPath) ? fs.readFileSync(bgPath, "utf8") : "",
+	);
+	const hadExistingFonts = existingInBg.length > 0;
+	const merged = mergeFontLists(existingInBg, incoming, dedupeFontFiles);
+
+	const androidDir = findAndroidDir(projectRoot);
+	const copied = copyFontFiles({
+		projectRoot,
+		fonts: incoming,
+		androidDir,
+	});
+
+	for (const item of copied) {
+		const rel = path.relative(cwd, item.path);
+		console.log(`  → ${rel}${item.role === "android" ? " (android host)" : ""}`);
+	}
+	if (androidDir == null) {
+		console.log(
+			"  ℹ No Android host found next to this app — fonts were only copied into src/assets/fonts/.\n" +
+				"    (PROD asset:/// registration needs the host's AssetFontFaceLoader.)",
+		);
+	}
+
+	const bgResult = applyBackgroundFonts(projectRoot, merged);
+	if (bgResult.ok) {
+		console.log("  ✔ Updated src/background.ts");
+	} else {
+		console.log(`  ✖ Could not auto-edit src/background.ts (${bgResult.reason}).`);
+		console.log("    Paste this block at the top of src/background.ts:");
+		printManualBlock("src/background.ts", bgResult.manualBlock);
+	}
+
+	const cssResult = applyCssDefaultFont(projectRoot, merged[0].family, { hadExistingFonts });
+	if (cssResult.ok && cssResult.skipped) {
+		console.log(
+			`  · src/style.css already has text { font-family: … } — assign extra fonts in your own classes.`,
+		);
+	} else if (cssResult.ok) {
+		console.log("  ✔ Updated src/style.css");
+	} else {
+		console.log(`  ✖ Could not auto-edit src/style.css (${cssResult.reason}).`);
+		console.log("    Paste this at the top of src/style.css (or assign the family on your own classes):");
+		printManualBlock("src/style.css", cssResult.manualBlock);
+	}
+
+	const extras = merged.slice(hadExistingFonts ? existingInBg.length : 1).map((f) => f.family);
+	// When we had no prior fonts, slice(1) are extras beyond the CSS default.
+	// When we had prior fonts, newly added ones after existingInBg.length need a note.
+	const newlyAddedFamilies = incoming.map((f) => f.family);
+	if (hadExistingFonts && newlyAddedFamilies.length > 0) {
+		console.log(
+			`  · New font${newlyAddedFamilies.length > 1 ? "s" : ""} ${newlyAddedFamilies.map((f) => `"${f}"`).join(", ")} — set font-family on your own CSS classes.`,
+		);
+	} else if (!hadExistingFonts && extras.length > 0) {
+		console.log(
+			`  · Extra font${extras.length > 1 ? "s" : ""} ${extras.map((f) => `"${f}"`).join(", ")} — set font-family on your own CSS classes.`,
+		);
+	}
+
+	outro(
+		`Done. Font${merged.length > 1 ? "s" : ""} ${merged.map((f) => `"${f.family}"`).join(", ")} ` +
+			(bgResult.ok ? "registered." : "copied — finish registration with the lines above."),
+	);
 }
 
 function scaffoldAndroid({ targetDir, rawName, options }) {
@@ -470,15 +594,11 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 		// best-effort
 	}
 
-	// 2. Fonts need no native code at all: lynx.config.ts's dataUriLimit:
-	//    Infinity (see templates/_shared/ts/lynx.config.ts) already inlines
-	//    any imported .ttf as a data: URI, and lynx.addFont() resolves a
-	//    data: URI on every host with no registration — confirmed on device
-	//    (a stock generated Android host, with no custom Loader/fetcher of
-	//    any kind, renders the font correctly) and with no cold-start cost
-	//    (three-run A/B on the same device: 724-745ms with the font vs.
-	//    715-826ms without — indistinguishable). See patchJsProject() for
-	//    where the font actually gets wired up (entirely JS-side).
+	// 2. Fonts: the host always ships AssetFontFaceLoader +
+	//    NoopGenericResourceFetcher (lynx#9431 workaround). Production
+	//    bundles register fonts as asset:///fonts/<file>; Lynx Go / dev
+	//    uses inlined data: URIs. See patchJsProject() for the JS wiring
+	//    and templates/android/host/.../NoopGenericResourceFetcher.kt.
 	const sdkDir = findAndroidSdk();
 
 	// 3. Text substitutions across the whole Android host (skipping the
@@ -496,7 +616,17 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 		],
 	]);
 
-	// 4. The script that joins the two halves, inside the JS project.
+	// 4. Seed assets/fonts/ so the first APK build works even before
+	//    scripts/android.mjs syncs (it also keeps them in sync later).
+	if (fonts.length > 0) {
+		const androidFontsDir = path.join(androidDir, "app", "src", "main", "assets", "fonts");
+		fs.mkdirSync(androidFontsDir, { recursive: true });
+		for (const { sourcePath, file } of fonts) {
+			fs.copyFileSync(sourcePath, path.join(androidFontsDir, file));
+		}
+	}
+
+	// 5. The script that joins the two halves, inside the JS project.
 	const scriptsDir = path.join(targetDir, "scripts");
 	fs.mkdirSync(scriptsDir, { recursive: true });
 	fs.copyFileSync(path.join(ANDROID_TEMPLATE_ROOT, "app-scripts", "android.mjs"), path.join(scriptsDir, "android.mjs"));
@@ -527,76 +657,22 @@ function patchJsProject({ targetDir, android }) {
 	};
 	fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
-	// The font: entirely JS-side, no native code, no @font-face.
-	//
-	// - The .ttf goes into the JS project itself (src/assets/fonts/), so the
-	//   bundler can import it. templates/_shared/ts/lynx.config.ts already
-	//   sets `dataUriLimit: Infinity`, which inlines that import as a
-	//   `data:font/ttf;base64,...` URI directly in the bundle — no separate
-	//   file, no asset-path puzzle to solve for a packaged native host.
-	// - lynx.addFont() (not @font-face) registers it, called from
-	//   background.ts. A data: URI resolves the same way on every host —
-	//   confirmed on a real device with a stock generated Android host (no
-	//   AssetFontFaceLoader, no custom resource fetcher) and with LynxExplorer/
-	//   Lynx Go, with no cold-start cost (a three-run A/B on the same device
-	//   measured 724-745ms with the font vs. 715-826ms without —
-	//   indistinguishable; the old +1-2s regression was specific to
-	//   @font-face's forced synchronous resolution, which doesn't apply here).
+	// Fonts: copy + register via lynx.addFont() loop (DEV data: / PROD
+	// asset:///) — see src/fonts-wire.js and the Android host's
+	// AssetFontFaceLoader / NoopGenericResourceFetcher (lynx#9431).
 	if (android.fonts.length > 0) {
-		const fontsDir = path.join(targetDir, "src", "assets", "fonts");
-		fs.mkdirSync(fontsDir, { recursive: true });
-
-		const usedVarNames = new Set();
-		const importLines = [];
-		const addFontLines = [];
-		for (const { family, sourcePath, file } of android.fonts) {
-			fs.copyFileSync(sourcePath, path.join(fontsDir, file));
-
-			let varName = jsIdentifierFor(family);
-			while (usedVarNames.has(varName)) varName = `${varName}2`;
-			usedVarNames.add(varName);
-
-			importLines.push(`import ${varName} from "./assets/fonts/${file}";`);
-			addFontLines.push(
-				`lynx.addFont({ "font-family": "${family}", src: \`url("\${${varName}}")\` }, () => {});`,
-			);
-		}
-
-		// Only the first font gets an automatic CSS rule (the app-wide
-		// default, matching --with-font's single-font behavior exactly) —
-		// with more than one, there's no way to guess which elements should
-		// use which, so the rest are just registered via lynx.addFont() and
-		// left for you to assign in your own CSS classes.
-		const defaultFamily = android.fonts[0].family;
-		const extraFamilies = android.fonts.slice(1).map((f) => f.family);
-
+		copyFontFiles({
+			projectRoot: targetDir,
+			fonts: android.fonts,
+			androidDir: android.androidDir,
+		});
 		const bgPath = path.join(targetDir, "src", "background.ts");
-		const fontBlock = [
-			android.fonts.length === 1
-				? `// Font: "${defaultFamily}", bundled from src/assets/fonts/${android.fonts[0].file}. lynx.addFont()`
-				: `// Fonts: ${android.fonts.map((f) => `"${f.family}"`).join(", ")}, bundled from src/assets/fonts/. lynx.addFont()`,
-			"// registers each directly — dataUriLimit: Infinity (lynx.config.ts) inlines",
-			"// every import as a data: URI, which resolves the same way on every host,",
-			"// no native code needed.",
-			...(extraFamilies.length > 0
-				? [
-						`// Only "${defaultFamily}" got the automatic text { font-family: ... }`,
-						`// rule below — assign ${extraFamilies.map((f) => `"${f}"`).join(" / ")} to your own`,
-						"// classes in src/style.css, e.g. `.code { font-family: \"" + extraFamilies[0] + "\"; }`.",
-					]
-				: []),
-			...importLines,
-			...addFontLines,
-			"",
-			"",
-		].join("\n");
 		const existingBg = fs.existsSync(bgPath) ? fs.readFileSync(bgPath, "utf8") : "";
-		fs.writeFileSync(bgPath, `${fontBlock}${existingBg}`);
+		fs.writeFileSync(bgPath, `${buildFontBlock(android.fonts)}${existingBg}`);
 
 		const cssPath = path.join(targetDir, "src", "style.css");
-		const cssBlock = [`text {`, `  font-family: "${defaultFamily}", sans-serif;`, `}`, ""].join("\n");
 		const existingCss = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : "";
-		fs.writeFileSync(cssPath, `${cssBlock}\n${existingCss}`);
+		fs.writeFileSync(cssPath, `${buildCssFontBlock(android.fonts[0].family)}${existingCss}`);
 	}
 
 	// README: how the two halves are used together.
@@ -622,7 +698,7 @@ function patchJsProject({ targetDir, android }) {
 			`- Application class: \`${android.appClass}\` · Activity: \`MainActivity\``,
 			...android.fonts.map(
 				(f) =>
-					`- Font \`${f.family}\` loaded via \`lynx.addFont()\` from \`src/assets/fonts/${f.file}\` (bundled as a data: URI — no native code involved).`,
+					`- Font \`${f.family}\` (\`src/assets/fonts/${f.file}\`): \`lynx.addFont()\` — DEV inlines a \`data:\` URI for Lynx Go; PROD uses \`asset:///fonts/${f.file}\` via \`AssetFontFaceLoader\` ([lynx#9431](https://github.com/lynx-family/lynx/issues/9431)).`,
 			),
 			"",
 		].join("\n");
@@ -638,6 +714,8 @@ create-mithril-lynx — scaffold a mithril-lynx app (and, optionally, its Androi
 Usage:
   npm create mithril-lynx@latest [name] [options]
   npx create-mithril-lynx <name> --blank --android
+  npx create-mithril-lynx add-font --with-font ./Foo.ttf
+  npx create-mithril-lynx add-font --find-font Inter
 
 Template (prompted for if omitted):
   --hello-world | --blank | --basic-activity
@@ -648,9 +726,10 @@ Android host:
   --android-id <id>         applicationId / namespace (default com.example.<name>)
   --app-name <name>         launcher label (default: the project name)
   --with-font <file.ttf>    bundle the font into the JS project and register it
-                            with lynx.addFont() (works on every host, no native
-                            code — see README). Comma-separate for more than
-                            one, e.g. --with-font a.ttf,b.ttf
+                            with lynx.addFont() (DEV: data: URI for Lynx Go;
+                            PROD: asset:/// + AssetFontFaceLoader — see README).
+                            Comma-separate for more than one,
+                            e.g. --with-font a.ttf,b.ttf
   --find-font <term>        search Fontsource (fontsource.org) for a font,
                             pick a family and a weight/style interactively,
                             and bundle it the same way as --with-font.
@@ -659,6 +738,15 @@ Android host:
                             --find-font "Inter,JetBrains Mono"
   --font-family <name>      override the family name derived from the file
                             name (only valid with exactly one font)
+
+Post-init (run inside an existing app directory):
+  add-font                  copy font file(s) into src/assets/fonts/ (and the
+                            Android host's assets/fonts/ when present). If
+                            background.ts / style.css still match the stock
+                            template, wire them up automatically; otherwise
+                            print the lines to paste by hand.
+                            Same --with-font / --find-font / --font-family
+                            flags as above.
 
 Other:
   --no-install              don't install dependencies
@@ -671,10 +759,16 @@ async function main() {
 	//   create-mithril-lynx my-app --basic-activity --no-install
 	//   create-mithril-lynx my-app --blank --android --android-id com.acme.miapp
 	//   create-mithril-lynx my-app --blank --with-font ./UbuntuMono-Regular.ttf
+	//   create-mithril-lynx add-font --with-font ./Extra.ttf
 	const args = process.argv.slice(2);
 
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(USAGE);
+		return;
+	}
+
+	if (args[0] === "add-font") {
+		await runAddFont(args.slice(1));
 		return;
 	}
 
@@ -810,7 +904,7 @@ async function main() {
 					`${androidDirName}/local.properties (sdk.dir=...).`
 				: `Android SDK found at ${sdkDir}.`,
 			fonts.length > 0
-				? `Font${fonts.length > 1 ? "s" : ""} ${fonts.map((f) => `"${f.family}"`).join(", ")} bundled and registered via lynx.addFont() — works on every host.`
+				? `Font${fonts.length > 1 ? "s" : ""} ${fonts.map((f) => `"${f.family}"`).join(", ")} registered via lynx.addFont() — Lynx Go (data:) and the APK (asset:///) both covered.`
 				: "No custom font — pass --with-font <file.ttf> (or --find-font <term>) to bundle one.",
 		];
 		outro(`Done! Next steps:\n\n  ${steps.join("\n  ")}\n\n${notes.join("\n")}`);

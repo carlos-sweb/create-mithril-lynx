@@ -34,6 +34,13 @@ const BUNDLE_NAME = "main-thread.bundle";
 const BUNDLE_SRC = path.join(projectRoot, "dist", BUNDLE_NAME);
 const BUNDLE_DEST = path.join(ANDROID_DIR, "app", "src", "main", "assets", BUNDLE_NAME);
 
+// Custom fonts (src/assets/fonts/*.ttf) — production bundles resolve them via
+// asset:///fonts/<file> (AssetFontFaceLoader in the Android host). Keep the
+// host's assets/fonts/ in sync with the JS project on every android sync.
+const FONTS_SRC = path.join(projectRoot, "src", "assets", "fonts");
+const FONTS_DEST = path.join(ANDROID_DIR, "app", "src", "main", "assets", "fonts");
+const FONT_EXT = /\.(ttf|otf|ttc)$/i;
+
 const USAGE = `
 Usage: npm run android -- [flags] [-- gradle-args]
 
@@ -97,6 +104,19 @@ function requireAndroidDir() {
 	}
 }
 
+function syncFonts() {
+	if (!fs.existsSync(FONTS_SRC)) return;
+	const files = fs.readdirSync(FONTS_SRC).filter((name) => FONT_EXT.test(name));
+	if (files.length === 0) return;
+	fs.mkdirSync(FONTS_DEST, { recursive: true });
+	for (const name of files) {
+		const dest = path.join(FONTS_DEST, name);
+		fs.copyFileSync(path.join(FONTS_SRC, name), dest);
+		const kb = (fs.statSync(dest).size / 1024).toFixed(1);
+		console.log(`  → ${path.relative(projectRoot, dest)} (${kb} kB)`);
+	}
+}
+
 function syncBundle() {
 	if (!fs.existsSync(BUNDLE_SRC)) {
 		fail(`${path.relative(projectRoot, BUNDLE_SRC)} doesn't exist. Run "npm run build" first (or drop --no-build).`);
@@ -106,6 +126,7 @@ function syncBundle() {
 	fs.copyFileSync(BUNDLE_SRC, BUNDLE_DEST);
 	const kb = (fs.statSync(BUNDLE_DEST).size / 1024).toFixed(1);
 	console.log(`  → ${path.relative(projectRoot, BUNDLE_DEST)} (${kb} kB)`);
+	syncFonts();
 }
 
 function generateKeystore() {

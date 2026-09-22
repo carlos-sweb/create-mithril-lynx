@@ -3,6 +3,7 @@ package {{PACKAGE_NAME}}
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.lynx.tasm.LynxBooleanOption
 import com.lynx.tasm.LynxViewBuilder
 import com.lynx.tasm.ThreadStrategyForRendering
 import com.lynx.xelement.XElementBehaviors
@@ -19,6 +20,15 @@ class MainActivity : AppCompatActivity() {
         // keyboard. Remove this line (and the xelement dependencies) if you
         // don't use them.
         builder.addBehaviors(XElementBehaviors().create())
+        // lynx-family/lynx's own explorer/android registers a
+        // GenericResourceFetcher unconditionally (LynxViewShellActivity —
+        // "used inside LynxEngine for resource loading capabilities of
+        // components such as Text"). Without one, @font-face / addFont
+        // data: URIs fall back to a ~1.4-1.5s legacy path — see
+        // NoopGenericResourceFetcher and
+        // https://github.com/lynx-family/lynx/issues/9431
+        builder.setEnableGenericResourceFetcher(LynxBooleanOption.TRUE)
+        builder.setGenericResourceFetcher(NoopGenericResourceFetcher())
         builder.setThreadStrategyForRendering(ThreadStrategyForRendering.ALL_ON_UI)
         // Reads the bundle from assets on a separate thread — see
         // AssetTemplateProvider's comment: reading it synchronously here cost

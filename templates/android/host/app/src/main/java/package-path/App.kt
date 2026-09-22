@@ -3,6 +3,7 @@ package {{PACKAGE_NAME}}
 import android.app.Application
 import com.lynx.service.log.LynxLogService
 import com.lynx.tasm.LynxEnv
+import com.lynx.tasm.loader.LynxFontFaceLoader
 import com.lynx.tasm.service.LynxServiceCenter
 
 class {{APP_CLASS}} : Application() {
@@ -15,6 +16,12 @@ class {{APP_CLASS}} : Application() {
         // don't want it.
         LynxServiceCenter.inst().registerService(LynxLogService)
         LynxLogService.switchLogToSystem(true)
+
+        // Lets FontFaceManager resolve "asset:///" (production fonts under
+        // assets/fonts/) — see AssetFontFaceLoader. Pairs with
+        // NoopGenericResourceFetcher in MainActivity for the fast @font-face
+        // path (https://github.com/lynx-family/lynx/issues/9431).
+        LynxFontFaceLoader.setLoader(AssetFontFaceLoader)
 
         LynxEnv.inst().init(this, null, null, null)
     }

@@ -25,7 +25,11 @@ declare const module: {
 		accept(path: string, callback: () => void): void;
 	};
 };
-declare const require: (id: string) => typeof indexModule;
+// Overloads: HMR reloads index.js; DEV font registration (prepended by
+// create-mithril-lynx when --with-font/--find-font is used) requires .ttf
+// paths as string URLs.
+declare function require(id: "./index.js"): typeof indexModule;
+declare function require(id: string): string;
 
 if (module.hot) {
 	module.hot.accept("./index.js", () => {
