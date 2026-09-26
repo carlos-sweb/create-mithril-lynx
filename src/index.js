@@ -5,14 +5,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 
-import { cancel, confirm, intro, isCancel, outro, select, spinner, text } from "@clack/prompts";
+import { cancel, confirm, intro, isCancel, multiselect, outro, select, spinner, text } from "@clack/prompts";
 
 import { fetchFontDetail, fetchFontList, listVariants, searchFonts } from "./fontsource.js";
 import {
 	applyBackgroundFonts,
-	applyCssDefaultFont,
-	buildCssFontBlock,
+	applyFontsCss,
 	buildFontBlock,
+	cssClassName,
 	copyFontFiles,
 	findAndroidDir,
 	findProjectRoot,
@@ -255,6 +255,12 @@ const WEIGHT_NAMES = {
 	900: "Black",
 };
 
+/** "Bold", "Light Italic" — the part appended to the family name. */
+function variantName(variant) {
+	const weightName = WEIGHT_NAMES[variant.weight] ?? String(variant.weight);
+	return `${weightName}${variant.style === "italic" ? " Italic" : ""}`;
+}
+
 function variantLabel(variant) {
 	const weightName = WEIGHT_NAMES[variant.weight] ?? String(variant.weight);
 	const style = variant.style === "italic" ? " Italic" : "";
@@ -264,8 +270,8 @@ function variantLabel(variant) {
 /**
  * Interactive search-download flow for `--find-font <term>`: queries
  * Fontsource's catalog locally (see src/fontsource.js — the API itself has
- * no free-text search), lets the user pick a family and one weight/style,
- * downloads that .ttf to a temp file, and returns it in the same shape
+ * no free-text search), lets the user pick a family and one or more weights/styles,
+ * downloads each .ttf to a temp file, and returns them in the same shape
  * `--with-font <file>` expects, so the rest of the pipeline (entirely
  * JS-side — see patchJsProject()) doesn't need to know which path was used.
  */
@@ -322,33 +328,45 @@ async function findFontInteractively(term) {
 	s2.stop(`${variants.length || allVariants.length} variant(s) available.`);
 
 	const pickFrom = variants.length > 0 ? variants : allVariants;
-	const chosenVariant = await select({
-		message: "Which weight/style?",
-		initialValue: pickFrom.find((v) => v.weight === 400 && v.style === "normal") ?? pickFrom[0],
+	const defaultVariant = pickFrom.find((v) => v.weight === 400 && v.style === "normal") ?? pickFrom[0];
+	const chosenVariants = await multiselect({
+		message: "Which weights/styles? (space to toggle, enter to confirm)",
+		initialValues: [defaultVariant],
+		required: true,
 		options: pickFrom.map((v) => ({ value: v, label: variantLabel(v) })),
 	});
-	if (isCancel(chosenVariant)) return null;
-
-	const s3 = spinner();
-	s3.start(`Downloading ${detail.family} ${variantLabel(chosenVariant)}…`);
-	let bytes;
-	try {
-		const response = await fetch(chosenVariant.url);
-		if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
-		bytes = Buffer.from(await response.arrayBuffer());
-	} catch (error) {
-		s3.stop("Download failed.");
-		cancel(error instanceof Error ? error.message : String(error));
-		process.exit(1);
-	}
-	const tempFile = path.join(
-		os.tmpdir(),
-		`${chosenId}-${chosenVariant.weight}-${chosenVariant.style}-${chosenVariant.subset}.ttf`,
+	if (isCancel(chosenVariants)) return null;
+	// Regular first (it becomes the family's plain name), then by weight/style.
+	chosenVariants.sort(
+		(a, b) =>
+			(b === defaultVariant) - (a === defaultVariant) || a.weight - b.weight || a.style.localeCompare(b.style),
 	);
-	fs.writeFileSync(tempFile, bytes);
-	s3.stop(`Downloaded ${(bytes.length / 1024).toFixed(1)} kB.`);
 
-	return { sourcePath: tempFile, family: detail.family };
+	const results = [];
+	for (const [index, variant] of chosenVariants.entries()) {
+		const s3 = spinner();
+		s3.start(`Downloading ${detail.family} ${variantLabel(variant)}…`);
+		let bytes;
+		try {
+			const response = await fetch(variant.url);
+			if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
+			bytes = Buffer.from(await response.arrayBuffer());
+		} catch (error) {
+			s3.stop("Download failed.");
+			cancel(error instanceof Error ? error.message : String(error));
+			process.exit(1);
+		}
+		const tempFile = path.join(
+			os.tmpdir(),
+			`${chosenId}-${variant.weight}-${variant.style}-${variant.subset}.ttf`,
+		);
+		fs.writeFileSync(tempFile, bytes);
+		s3.stop(`Downloaded ${(bytes.length / 1024).toFixed(1)} kB.`);
+		// Each file is registered under its own family name (addFont has no
+		// weight/style axis here): "Ubuntu Regular", "Ubuntu Bold Italic"…
+		results.push({ sourcePath: tempFile, base: detail.family, family: `${detail.family} ${variantName(variant)}` });
+	}
+	return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +436,7 @@ async function resolveFontsFromFlags(android, { baseDir, requireFonts }) {
 
 	if (android.fontFamily != null && fontCount > 1) {
 		cancel(
-			"--font-family only makes sense with exactly one font — omit it when bundling more than one, or edit src/style.css/background.ts by hand afterwards.",
+			"--font-family only makes sense with exactly one font — omit it when bundling more than one, or use the classes in src/fonts.css.",
 		);
 		process.exit(1);
 	}
@@ -438,11 +456,20 @@ async function resolveFontsFromFlags(android, { baseDir, requireFonts }) {
 	for (const term of findFontTerms) {
 		const found = await findFontInteractively(term);
 		if (found == null) return null;
-		fonts.push({
-			sourcePath: found.sourcePath,
-			file: path.basename(found.sourcePath),
-			family: android.fontFamily ?? found.family,
-		});
+		for (const variant of found) {
+			fonts.push({
+				sourcePath: variant.sourcePath,
+				file: path.basename(variant.sourcePath),
+				// --font-family replaces the family part; the variant suffix stays
+				// unless there is only one variant.
+				family:
+					android.fontFamily == null
+						? variant.family
+						: found.length === 1
+							? android.fontFamily
+							: variant.family.replace(variant.base, android.fontFamily),
+			});
+		}
 	}
 	for (const rawPath of fontPaths) {
 		const resolved = path.resolve(baseDir, rawPath);
@@ -505,7 +532,6 @@ async function runAddFont(args) {
 	const { fonts: existingInBg } = stripFontBlock(
 		fs.existsSync(bgPath) ? fs.readFileSync(bgPath, "utf8") : "",
 	);
-	const hadExistingFonts = existingInBg.length > 0;
 	const merged = mergeFontLists(existingInBg, incoming, dedupeFontFiles);
 
 	const androidDir = findAndroidDir(projectRoot);
@@ -535,30 +561,19 @@ async function runAddFont(args) {
 		printManualBlock("src/background.ts", bgResult.manualBlock);
 	}
 
-	const cssResult = applyCssDefaultFont(projectRoot, merged[0].family, { hadExistingFonts });
-	if (cssResult.ok && cssResult.skipped) {
-		console.log(
-			`  · src/style.css already has text { font-family: … } — assign extra fonts in your own classes.`,
-		);
-	} else if (cssResult.ok) {
-		console.log("  ✔ Updated src/style.css");
-	} else {
-		console.log(`  ✖ Could not auto-edit src/style.css (${cssResult.reason}).`);
-		console.log("    Paste this at the top of src/style.css (or assign the family on your own classes):");
+	const cssResult = applyFontsCss(projectRoot, merged);
+	console.log("  ✔ Regenerated src/fonts.css (generated — don't edit it by hand)");
+	if (cssResult.ok && !cssResult.skipped) {
+		console.log('  ✔ Added @import "fonts.css"; to src/style.css');
+	} else if (!cssResult.ok) {
+		console.log(`  ✖ Could not add the import to src/style.css (${cssResult.reason}).`);
+		console.log("    Add this line at the very top of your stylesheet:");
 		printManualBlock("src/style.css", cssResult.manualBlock);
 	}
 
-	const extras = merged.slice(hadExistingFonts ? existingInBg.length : 1).map((f) => f.family);
-	// When we had no prior fonts, slice(1) are extras beyond the CSS default.
-	// When we had prior fonts, newly added ones after existingInBg.length need a note.
-	const newlyAddedFamilies = incoming.map((f) => f.family);
-	if (hadExistingFonts && newlyAddedFamilies.length > 0) {
+	if (merged.length > 1) {
 		console.log(
-			`  · New font${newlyAddedFamilies.length > 1 ? "s" : ""} ${newlyAddedFamilies.map((f) => `"${f}"`).join(", ")} — set font-family on your own CSS classes.`,
-		);
-	} else if (!hadExistingFonts && extras.length > 0) {
-		console.log(
-			`  · Extra font${extras.length > 1 ? "s" : ""} ${extras.map((f) => `"${f}"`).join(", ")} — set font-family on your own CSS classes.`,
+			`  · Use the classes in src/fonts.css: ${merged.map((f) => "." + cssClassName(f.family)).join(", ")}`,
 		);
 	}
 
@@ -670,9 +685,7 @@ function patchJsProject({ targetDir, android }) {
 		const existingBg = fs.existsSync(bgPath) ? fs.readFileSync(bgPath, "utf8") : "";
 		fs.writeFileSync(bgPath, `${buildFontBlock(android.fonts)}${existingBg}`);
 
-		const cssPath = path.join(targetDir, "src", "style.css");
-		const existingCss = fs.existsSync(cssPath) ? fs.readFileSync(cssPath, "utf8") : "";
-		fs.writeFileSync(cssPath, `${buildCssFontBlock(android.fonts[0].family)}${existingCss}`);
+		applyFontsCss(targetDir, android.fonts);
 	}
 
 	// README: how the two halves are used together.
