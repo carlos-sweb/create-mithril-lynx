@@ -125,7 +125,7 @@ The sibling `<name>-android/` project is a complete, no-Android-Studio Gradle CL
 - the Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`), so nothing needs to be installed besides a JDK and the Android SDK;
 - `local.properties` with `sdk.dir` auto-detected from `ANDROID_HOME`/`ANDROID_SDK_ROOT` (with a written warning if it can't be found);
 - the Kotlin host: the `Application` (registers `AssetFontFaceLoader`), `MainActivity` (async `AssetTemplateProvider`, splash screen, `NoopGenericResourceFetcher` for the fast `data:` font path — [lynx#9431](https://github.com/lynx-family/lynx/issues/9431)), and a predefined native bridge for `mithril-lynx/route`'s Android system Back support;
-- resource files that compile as-is (theme, splash theme, adaptive launcher icon);
+- a project-local `android/` folder with editable `AndroidManifest.xml`, `strings.xml`, `styles.xml`, `config.xml`, `network_security_config.xml`, and `file_paths.xml`, plus `bun run android:prepare` to copy them into the Gradle host;
 - an opt-in release signing setup driven by a gitignored `keystore.properties`.
 
 And in the JS project, a `scripts/android.mjs` bridge plus npm scripts:
@@ -135,6 +135,7 @@ npm run android            # build + sync + installDebug + launch, printing Tota
 npm run android:apk        # build + sync + assembleDebug
 npm run android:release    # build + sync + assembleRelease (signed if keystore.properties exists)
 npm run android:sync       # build + sync bundle into app/src/main/assets/, no Gradle
+bun run android:prepare    # manually sync android/*.xml -> sibling Android host
 npm run android:keystore   # generate release.keystore + keystore.properties (KEYSTORE_PASSWORD=...)
 ```
 
@@ -175,13 +176,14 @@ create-mithril-lynx/
                              (includes AssetFontFaceLoader,
                              NoopGenericResourceFetcher for lynx#9431, and the
                              MithrilLynxNavigationModule system-Back bridge)
-      app-scripts/android.mjs       the bridge -> <name>/scripts/android.mjs
-                             (syncs bundle + src/assets/fonts/ → assets/fonts/)
+      app-scripts/{android,android-prepare}.mjs
+                             bridges in <name>/scripts/ (syncs bundle/fonts;
+                             prepares <name>/android/*.xml into the host)
 ```
 
 `src/index.js` copies, in order, `templates/_shared/common` → `templates/_shared/ts` → `templates/<template>/common` → `templates/<template>/ts` into the target directory — later copies overwrite same-named files from earlier ones, which is exactly how **Basic Activity**'s own routing-based `src/background.ts` replaces `_shared/ts`'s generic single-view one (Hello World and Blank don't ship their own, so they keep the shared file). It then renames `gitignore` to `.gitignore` (npm doesn't publish dotfiles reliably otherwise) and replaces `{{PROJECT_NAME}}`/`{{MITHRIL_LYNX_VERSION}}` placeholders in `package.json` and `README.md`.
 
-With `--android` it then copies `templates/android/host` into a sibling `<name>-android/` (renaming `package-path` to the real package directory and `App.kt` to the Application class) and substitutes `{{PACKAGE_NAME}}`, `{{APP_CLASS}}`, `{{APP_NAME}}`, `{{ANDROID_DIR}}` and `{{SDK_DIR}}` across the tree. Binary files (the Gradle wrapper jar, a `--with-font` `.ttf`) are never text-substituted. With `--with-font`, each font is copied into the JS project (`src/assets/fonts/`) *and* seeded into the Android host's `assets/fonts/`, wired up with a `FONTS` loop + `lynx.addFont()` in `src/background.ts` plus a generated `src/fonts.css` (`text { font-family }` for the first font, one class per font when there are several) imported from `src/style.css`. `scripts/android.mjs` keeps `assets/fonts/` in sync on every `npm run android` / `android:sync`.
+With `--android` it then copies `templates/android/host` into a sibling `<name>-android/` (renaming `package-path` to the real package directory and `App.kt` to the Application class) and substitutes `{{PACKAGE_NAME}}`, `{{APP_CLASS}}`, `{{APP_NAME}}`, `{{ANDROID_DIR}}` and `{{SDK_DIR}}` across the tree. It also seeds the generated project's `android/` folder with `AndroidManifest.xml`, `strings.xml`, `styles.xml`, `config.xml`, `network_security_config.xml`, and `file_paths.xml`. `bun run build` (and the Android build commands that invoke it) automatically synchronizes those local copies to the Gradle host first; use `bun run android:prepare` (or `npm run android:prepare`) when you only want that synchronization. Binary files (the Gradle wrapper jar, a `--with-font` `.ttf`) are never text-substituted. With `--with-font`, each font is copied into the JS project (`src/assets/fonts/`) *and* seeded into the Android host's `assets/fonts/`, wired up with a `FONTS` loop + `lynx.addFont()` in `src/background.ts` plus a generated `src/fonts.css` (`text { font-family }` for the first font, one class per font when there are several) imported from `src/style.css`. `scripts/android.mjs` keeps `assets/fonts/` in sync on every `npm run android` / `android:sync`.
 
 **Not carried over from v1 (yet)**: the JavaScript variant. The old tool generated either TypeScript or JavaScript for every template; this rewrite ships TypeScript only for now — doubling every template for a parallel JS copy wasn't part of this pass.
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Project-owned Android configuration entry point. Android does not consume a
+  generic config.xml by itself; use it for XML metadata that a manifest entry
+  or a native integration needs, keeping that configuration beside the other
+  editable Android files in <project>/android/.
+-->
+<config />

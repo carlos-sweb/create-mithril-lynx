@@ -137,6 +137,26 @@ function appClassNameFor(rawName) {
 	return name === "MainActivity" ? `${name}App` : name;
 }
 
+/** Android files users edit from the JS project, before syncing them into the
+ * sibling Gradle host with `bun run android:prepare`. */
+const ANDROID_DEVELOPMENT_FILES = [
+	["AndroidManifest.xml", ["AndroidManifest.xml"]],
+	["strings.xml", ["res", "values", "strings.xml"]],
+	["styles.xml", ["res", "values", "styles.xml"]],
+	["config.xml", ["res", "xml", "config.xml"]],
+	["network_security_config.xml", ["res", "xml", "network_security_config.xml"]],
+	["file_paths.xml", ["res", "xml", "file_paths.xml"]],
+];
+
+function seedAndroidDevelopmentFiles(targetDir, androidDir) {
+	const sourceRoot = path.join(androidDir, "app", "src", "main");
+	const destinationRoot = path.join(targetDir, "android");
+	fs.mkdirSync(destinationRoot, { recursive: true });
+	for (const [name, sourceParts] of ANDROID_DEVELOPMENT_FILES) {
+		fs.copyFileSync(path.join(sourceRoot, ...sourceParts), path.join(destinationRoot, name));
+	}
+}
+
 function fontFamilyFor(filePath) {
 	return path
 		.basename(filePath, path.extname(filePath))
@@ -641,10 +661,16 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 		}
 	}
 
-	// 5. The script that joins the two halves, inside the JS project.
+	// 5. Give app developers editable Android XML in their project, instead of
+	// making them traverse into the sibling Gradle host. android:prepare copies
+	// these exact files back into their Android resource locations.
+	seedAndroidDevelopmentFiles(targetDir, androidDir);
+
+	// 6. The scripts that join the two halves, inside the JS project.
 	const scriptsDir = path.join(targetDir, "scripts");
 	fs.mkdirSync(scriptsDir, { recursive: true });
 	fs.copyFileSync(path.join(ANDROID_TEMPLATE_ROOT, "app-scripts", "android.mjs"), path.join(scriptsDir, "android.mjs"));
+	fs.copyFileSync(path.join(ANDROID_TEMPLATE_ROOT, "app-scripts", "android-prepare.mjs"), path.join(scriptsDir, "android-prepare.mjs"));
 
 	const androidRelDir = path.relative(targetDir, androidDir).split(path.sep).join("/");
 	replaceInFile(path.join(scriptsDir, "android.mjs"), [
@@ -654,6 +680,7 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 		// A name with quotes would break keytool's -dname=CN=...
 		["{{APP_NAME}}", appName.replace(/["\\]/g, "")],
 	]);
+	replaceInFile(path.join(scriptsDir, "android-prepare.mjs"), [["{{ANDROID_REL_DIR}}", androidRelDir]]);
 
 	return { androidDir, androidDirName, androidRelDir, androidId, appName, appClass, fonts, sdkDir };
 }
@@ -662,12 +689,18 @@ function patchJsProject({ targetDir, android }) {
 	// package.json: the Android scripts.
 	const pkgPath = path.join(targetDir, "package.json");
 	const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+	const buildCommand = pkg.scripts.build;
 	pkg.scripts = {
 		...pkg.scripts,
+		// Keep project-owned Android XML authoritative for every build path:
+		// `bun run build`, `npm run build`, and android.mjs's package-manager
+		// invocation all execute this command before rspeedy starts.
+		build: "node scripts/android-prepare.mjs && " + buildCommand,
 		android: "node scripts/android.mjs",
 		"android:apk": "node scripts/android.mjs --apk",
 		"android:release": "node scripts/android.mjs --release",
 		"android:sync": "node scripts/android.mjs --sync-only",
+		"android:prepare": "node scripts/android-prepare.mjs",
 		"android:keystore": "node scripts/android.mjs --keystore",
 	};
 	fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
@@ -701,6 +734,7 @@ function patchJsProject({ targetDir, android }) {
 			"npm run android          # build the bundle, copy it to assets, install and launch on the device",
 			"npm run android:apk      # build the debug APK only",
 			"npm run android:sync     # bundle -> assets only, no Gradle",
+			"bun run android:prepare  # android/*.xml -> sibling Android host",
 			"",
 			"# Signed release APK (generate the keystore once):",
 			"KEYSTORE_PASSWORD='...' npm run android:keystore",
@@ -709,6 +743,7 @@ function patchJsProject({ targetDir, android }) {
 			"",
 			`- Application ID: \`${android.androidId}\``,
 			`- Application class: \`${android.appClass}\` · Activity: \`MainActivity\``,
+			"- Android XML: edit `android/*.xml`; every `bun run build` synchronizes those files to the sibling host before bundling. Run `bun run android:prepare` when you only need the synchronization.",
 			"- Android system Back bridge: the host pre-registers `MithrilLynxNavigationModule`; connect a `mithril-lynx/route` app with `route.listenBackButton({ onCanGoBackChange: (value) => NativeModules.MithrilLynxNavigationModule?.setCanGoBack(value) })`. The Basic Activity template is already connected.",
 			...android.fonts.map(
 				(f) =>
