@@ -1,14 +1,18 @@
 package {{PACKAGE_NAME}}
 
 import android.os.Bundle
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.lynx.react.bridge.JavaOnlyArray
 import com.lynx.tasm.LynxBooleanOption
 import com.lynx.tasm.LynxViewBuilder
 import com.lynx.tasm.ThreadStrategyForRendering
 import com.lynx.xelement.XElementBehaviors
 
 class MainActivity : AppCompatActivity() {
+    private var backCallback: OnBackPressedCallback? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must run BEFORE super.onCreate() — a Splash Screen API requirement.
         installSplashScreen()
@@ -20,6 +24,9 @@ class MainActivity : AppCompatActivity() {
         // keyboard. Remove this line (and the xelement dependencies) if you
         // don't use them.
         builder.addBehaviors(XElementBehaviors().create())
+        // Lets mithril-lynx/route tell Android when its in-memory history can
+        // handle Back. See MithrilLynxNavigationModule and the callback below.
+        builder.registerModule("MithrilLynxNavigationModule", MithrilLynxNavigationModule::class.java)
         // lynx-family/lynx's own explorer/android registers a
         // GenericResourceFetcher unconditionally (LynxViewShellActivity —
         // "used inside LynxEngine for resource loading capabilities of
@@ -37,9 +44,29 @@ class MainActivity : AppCompatActivity() {
         val lynxView = builder.build(this)
         setContentView(lynxView)
 
+        // Disabled until route.listenBackButton() reports that JS has an
+        // in-app history entry. When disabled, Android's normal Back behavior
+        // remains in charge and closes the activity from the first screen.
+        val callback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                lynxView.sendGlobalEvent("mithrilLynx:back", JavaOnlyArray())
+            }
+        }
+        onBackPressedDispatcher.addCallback(this, callback)
+        backCallback = callback
+
         // The bundle lives in app/src/main/assets/main-thread.bundle, copied
         // there by `npm run android` (scripts/android.mjs) from the JS
         // project's dist/. The name has to match exactly.
         lynxView.renderTemplateUrl("main-thread.bundle", "")
+    }
+
+    fun setCanGoBack(canGoBack: Boolean) {
+        backCallback?.isEnabled = canGoBack
+    }
+
+    override fun onDestroy() {
+        backCallback = null
+        super.onDestroy()
     }
 }

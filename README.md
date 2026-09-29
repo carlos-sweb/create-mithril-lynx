@@ -124,7 +124,7 @@ The sibling `<name>-android/` project is a complete, no-Android-Studio Gradle CL
 
 - the Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`), so nothing needs to be installed besides a JDK and the Android SDK;
 - `local.properties` with `sdk.dir` auto-detected from `ANDROID_HOME`/`ANDROID_SDK_ROOT` (with a written warning if it can't be found);
-- the Kotlin host: the `Application` (registers `AssetFontFaceLoader`), `MainActivity` (async `AssetTemplateProvider`, splash screen, `NoopGenericResourceFetcher` for the fast `data:` font path — [lynx#9431](https://github.com/lynx-family/lynx/issues/9431));
+- the Kotlin host: the `Application` (registers `AssetFontFaceLoader`), `MainActivity` (async `AssetTemplateProvider`, splash screen, `NoopGenericResourceFetcher` for the fast `data:` font path — [lynx#9431](https://github.com/lynx-family/lynx/issues/9431)), and a predefined native bridge for `mithril-lynx/route`'s Android system Back support;
 - resource files that compile as-is (theme, splash theme, adaptive launcher icon);
 - an opt-in release signing setup driven by a gitignored `keystore.properties`.
 
@@ -138,7 +138,7 @@ npm run android:sync       # build + sync bundle into app/src/main/assets/, no G
 npm run android:keystore   # generate release.keystore + keystore.properties (KEYSTORE_PASSWORD=...)
 ```
 
-This part of the tool is framework-agnostic — it just wraps whatever bundle `rspeedy build` produces into a native host — so it needed no changes for the `mithril-lynx` rewrite beyond what's inherited automatically through the generated JS project.
+The packaging path still wraps whatever bundle `rspeedy build` produces. Its one framework-aware convenience is the predefined, otherwise dormant system Back bridge used by `mithril-lynx/route`; the Basic Activity template connects it automatically.
 
 ## Templates
 
@@ -146,7 +146,7 @@ This part of the tool is framework-agnostic — it just wraps whatever bundle `r
 |---|---|
 | **Hello World** (recommended) | The Mithril.js analog of Lynx's official React hello-world ([`lynx-examples/examples/hello-world`](https://github.com/lynx-family/lynx-examples/tree/main/examples/hello-world)) — same layout, same "tap the logo" interaction, running through Mithril hyperscript instead of JSX. |
 | **Blank** | A single centered line of text. Nothing else — the starting point when you don't want any of Hello World's styling/assets in your way. |
-| **Basic Activity** | Two screens (Main → Details) wired with [`mithril-lynx/route`](https://github.com/carlos-sweb/mithril-lynx/blob/main/ROUTE.md) — an in-memory router (`m.route`, reimplemented for an environment with no URL bar). Includes a reusable app-bar-with-back-button pattern, using `route.back()` since Lynx has no hardware back button for a route to hook into automatically. |
+| **Basic Activity** | Two screens (Main → Details) wired with [`mithril-lynx/route`](https://github.com/carlos-sweb/mithril-lynx/blob/main/ROUTE.md) — an in-memory router (`m.route`, reimplemented for an environment with no URL bar). Includes a reusable app-bar back affordance and, with `--android`, predefined system Back/predictive Back integration through `route.listenBackButton()`. |
 
 ## Package structure
 
@@ -172,8 +172,9 @@ create-mithril-lynx/
       ts/src/{app-bar.ts, background.ts, screens/{home,detail}.ts}
     android/                 only used with --android
       host/                  the Gradle project -> <name>-android/
-                             (includes AssetFontFaceLoader +
-                             NoopGenericResourceFetcher for lynx#9431)
+                             (includes AssetFontFaceLoader,
+                             NoopGenericResourceFetcher for lynx#9431, and the
+                             MithrilLynxNavigationModule system-Back bridge)
       app-scripts/android.mjs       the bridge -> <name>/scripts/android.mjs
                              (syncs bundle + src/assets/fonts/ → assets/fonts/)
 ```

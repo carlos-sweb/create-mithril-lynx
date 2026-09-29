@@ -709,6 +709,7 @@ function patchJsProject({ targetDir, android }) {
 			"",
 			`- Application ID: \`${android.androidId}\``,
 			`- Application class: \`${android.appClass}\` · Activity: \`MainActivity\``,
+			"- Android system Back bridge: the host pre-registers `MithrilLynxNavigationModule`; connect a `mithril-lynx/route` app with `route.listenBackButton({ onCanGoBackChange: (value) => NativeModules.MithrilLynxNavigationModule?.setCanGoBack(value) })`. The Basic Activity template is already connected.",
 			...android.fonts.map(
 				(f) =>
 					`- Font \`${f.family}\` (\`src/assets/fonts/${f.file}\`): \`lynx.addFont()\` — DEV inlines a \`data:\` URI for Lynx Go; PROD uses \`asset:///fonts/${f.file}\` via \`AssetFontFaceLoader\` ([lynx#9431](https://github.com/lynx-family/lynx/issues/9431)).`,
