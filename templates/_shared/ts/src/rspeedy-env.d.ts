@@ -8,5 +8,14 @@ declare module "@lynx-js/types" {
 		MithrilLynxNavigationModule?: {
 			setCanGoBack(canGoBack: boolean): void;
 		};
+		LynxBatteryPlugin?: { getStatus(requestId: string): void };
+		LynxCameraPlugin?: { takePhoto(requestId: string): void };
+		LynxDevicePlugin?: { getInfo(requestId: string): void };
+		LynxGeolocationPlugin?: { getCurrentPosition(requestId: string, highAccuracy: boolean): void };
+		LynxNetworkPlugin?: { getInfo(requestId: string): void };
+		LynxVibrationPlugin?: {
+			vibrate(requestId: string, durationMs: number): void;
+			cancel(requestId: string): void;
+		};
 	}
 }

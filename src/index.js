@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 
 import { cancel, confirm, intro, isCancel, multiselect, outro, select, spinner, text } from "@clack/prompts";
 
@@ -17,6 +17,7 @@ import {
 	findAndroidDir,
 	findProjectRoot,
 	mergeFontLists,
+	normalizeSource,
 	stripFontBlock,
 } from "./fonts-wire.js";
 
@@ -24,9 +25,10 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.join(scriptDir, "..");
 const cwd = process.cwd();
 
-// The mithril-lynx version pinned in the generated package.json — tracks
-// the current release, same policy as this tool's own v1.
+// Resolve the newest compatible framework packages when a project is scaffolded.
 const MITHRIL_LYNX_VERSION = "latest";
+const MITHRIL_LYNX_UI_VERSION = "latest";
+const MITHRIL_LYNX_UI_STYLES_IMPORT = '@import "mithril-lynx-ui/styles.css";';
 
 const TEMPLATES = [
 	{ value: "hello-world", label: "Hello World", hint: "recommended" },
@@ -36,6 +38,75 @@ const TEMPLATES = [
 const TEMPLATE_VALUES = TEMPLATES.map((t) => t.value);
 
 const ANDROID_TEMPLATE_ROOT = path.join(packageRoot, "templates", "android");
+const LYNX_ANDROID_PLUGINS_VERSION = "0.2.0";
+const LYNX_ANDROID_JS_VERSION = "latest";
+const LYNX_ANDROID_JS_LEGACY_VERSIONS = new Set(["^0.2.0"]);
+
+const ANDROID_PLUGINS = [
+	{
+		id: "battery",
+		label: "Battery",
+		hint: "level and charging state · no permission",
+		artifact: "lynx-android-battery",
+		kotlinImport: "dev.lynx.android.plugins.battery.LynxBatteryPlugin",
+		registry: "LynxBatteryPlugin",
+	},
+	{
+		id: "camera",
+		label: "Camera",
+		hint: "external photo capture · FileProvider",
+		artifact: "lynx-android-camera",
+		kotlinImport: "dev.lynx.android.plugins.camera.LynxCameraPlugin",
+		registry: "LynxCameraPlugin",
+		activityResult: true,
+	},
+	{
+		id: "device",
+		label: "Device",
+		hint: "non-identifying device information · no permission",
+		artifact: "lynx-android-device",
+		kotlinImport: "dev.lynx.android.plugins.device.LynxDevicePlugin",
+		registry: "LynxDevicePlugin",
+	},
+	{
+		id: "geolocation",
+		label: "Geolocation",
+		hint: "one-shot foreground location · runtime permission",
+		artifact: "lynx-android-geolocation",
+		kotlinImport: "dev.lynx.android.plugins.geolocation.LynxGeolocationPlugin",
+		registry: "LynxGeolocationPlugin",
+		permissionResult: true,
+	},
+	{
+		id: "network",
+		label: "Network",
+		hint: "network snapshot · no permission",
+		artifact: "lynx-android-network",
+		kotlinImport: "dev.lynx.android.plugins.network.LynxNetworkPlugin",
+		registry: "LynxNetworkPlugin",
+	},
+	{
+		id: "vibration",
+		label: "Vibration",
+		hint: "bounded vibration · VIBRATE permission",
+		artifact: "lynx-android-vibration",
+		kotlinImport: "dev.lynx.android.plugins.vibration.LynxVibrationPlugin",
+		registry: "LynxVibrationPlugin",
+	},
+	{
+		id: "maps",
+		label: "Maps",
+		hint: "native maps · offline packages · optional foreground location",
+		artifact: "lynx-android-maps",
+		kotlinImport: "dev.lynx.android.plugins.maps.LynxMapsPlugin",
+		registry: "LynxMapsPlugin",
+		permissionResult: true,
+	},
+];
+const ANDROID_PLUGIN_BY_ID = new Map(ANDROID_PLUGINS.map((plugin) => [plugin.id, plugin]));
+const CONNECTOR_CONFIG_RELATIVE_PATH = path.join("android", "connectors.json");
+const CONNECTOR_DEPENDENCY_START = "    // <create-mithril-lynx:android-connectors>";
+const CONNECTOR_DEPENDENCY_END = "    // </create-mithril-lynx:android-connectors>";
 
 // Files that text substitution must never touch (binaries).
 const BINARY_EXTENSIONS = new Set([".jar", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".ttf", ".otf", ".ttc", ".keystore", ".jks", ".so"]);
@@ -175,6 +246,279 @@ function splitList(value) {
 		.filter(Boolean);
 }
 
+function normalizeAndroidPlugins(ids) {
+	const selected = [...new Set(ids)];
+	const unknown = selected.filter((id) => id !== "all" && !ANDROID_PLUGIN_BY_ID.has(id));
+	if (unknown.length > 0) {
+		cancel(`Unknown Android plugin${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}. ` +
+			`Choose from ${ANDROID_PLUGINS.map((plugin) => plugin.id).join(", ")}, or all.`);
+		process.exit(1);
+	}
+	if (selected.includes("all") && selected.length > 1) {
+		cancel('"all" cannot be combined with individual Android plugins.');
+		process.exit(1);
+	}
+	return selected;
+}
+
+function connectorNpmPackages(pluginIds) {
+	return pluginIds.length === 0 ? [] : ["lynx-android-plugins"];
+}
+
+function ensureMapsConfiguration(projectRoot, pluginIds) {
+	if (!pluginIds.includes("maps") && !pluginIds.includes("all")) return;
+	const configPath = path.join(projectRoot, "android", "maps.json");
+	if (!fs.existsSync(configPath)) {
+		atomicWrite(configPath, `${JSON.stringify({ url: "", sha256: "", version: "" }, null, 2)}\n`);
+	}
+}
+
+function updatedConnectorPackageJson(projectRoot, currentIds, nextIds) {
+	const packagePath = path.join(projectRoot, "package.json");
+	const originalSource = fs.readFileSync(packagePath, "utf8");
+	const pkg = JSON.parse(originalSource);
+	if (pkg.dependencies == null || typeof pkg.dependencies !== "object" || Array.isArray(pkg.dependencies)) {
+		throw new Error("package.json dependencies cannot be managed. No files were changed.");
+	}
+	const current = new Set(connectorNpmPackages(currentIds));
+	const next = new Set(connectorNpmPackages(nextIds));
+	let changed = false;
+	for (const name of new Set([...current, ...next])) {
+		if (name in (pkg.devDependencies ?? {})) {
+			throw new Error(`${name} is in devDependencies. Move it to dependencies before managing connectors.`);
+		}
+		const version = pkg.dependencies[name];
+		const isManagedVersion = version === LYNX_ANDROID_JS_VERSION || LYNX_ANDROID_JS_LEGACY_VERSIONS.has(version);
+		if (version != null && !isManagedVersion) {
+			throw new Error(`${name} has a custom version. No files were changed.`);
+		}
+		if (next.has(name) && version !== LYNX_ANDROID_JS_VERSION) {
+			pkg.dependencies[name] = LYNX_ANDROID_JS_VERSION;
+			changed = true;
+		} else if (!next.has(name) && isManagedVersion) {
+			delete pkg.dependencies[name];
+			changed = true;
+		}
+	}
+	return { packagePath, source: changed ? `${JSON.stringify(pkg, null, 2)}\n` : originalSource };
+}
+
+function projectPackageManager(projectRoot) {
+	for (const [lock, manager] of [
+		["bun.lock", "bun"], ["bun.lockb", "bun"], ["pnpm-lock.yaml", "pnpm"],
+		["yarn.lock", "yarn"], ["package-lock.json", "npm"],
+	]) {
+		if (fs.existsSync(path.join(projectRoot, lock))) return manager;
+	}
+	return detectPackageManager();
+}
+
+function androidPluginHostConfiguration(pluginIds) {
+	const useAggregate = pluginIds.includes("all");
+	const plugins = useAggregate ? ANDROID_PLUGINS : pluginIds.map((id) => ANDROID_PLUGIN_BY_ID.get(id));
+	const gradleDependencies = useAggregate
+		? `    implementation("io.github.carlos-sweb:lynx-android-plugins:${LYNX_ANDROID_PLUGINS_VERSION}")`
+		: plugins.map((plugin) =>
+			`    implementation("io.github.carlos-sweb:${plugin.artifact}:${LYNX_ANDROID_PLUGINS_VERSION}")`,
+		).join("\n");
+	const imports = useAggregate
+		? ["import dev.lynx.android.plugins.LynxAndroidPlugins"]
+		: plugins.map((plugin) => `import ${plugin.kotlinImport}`);
+	const registrations = useAggregate
+		? "        LynxAndroidPlugins.register(builder)"
+		: plugins.map((plugin) => `        ${plugin.registry}.register(builder)`).join("\n");
+	const handlesPermission = useAggregate || plugins.some((plugin) => plugin.permissionResult);
+	const handlesActivity = useAggregate || plugins.some((plugin) => plugin.activityResult);
+	const permissionHandler = useAggregate
+		? "LynxAndroidPlugins.onRequestPermissionsResult(requestCode, permissions, grantResults)"
+		: plugins.filter((plugin) => plugin.permissionResult).map((plugin) =>
+			`${plugin.registry}.onRequestPermissionsResult(requestCode, permissions, grantResults)`,
+		).join(" || ");
+	const activityRegistry = useAggregate ? "LynxAndroidPlugins" : "LynxCameraPlugin";
+
+	return {
+		pluginIds,
+		gradleDependencies: gradleDependencies || "    // No Lynx Android connector selected.",
+		imports: imports.join("\n"),
+		registrations: registrations || "        // No Lynx Android connector selected.",
+		permissionHandler: handlesPermission
+			? permissionHandler
+			: "false",
+		activityHandler: handlesActivity
+			? `${activityRegistry}.onActivityResult(requestCode, resultCode, data)`
+			: "false",
+	};
+}
+
+function buildAndroidConnectorRegistry(packageName, pluginIds) {
+	const configuration = androidPluginHostConfiguration(pluginIds);
+	return [
+		"// GENERATED by create-mithril-lynx. Manage with add-android-plugin/remove-android-plugin.",
+		`package ${packageName}`,
+		"",
+		"import android.content.Intent",
+		"import com.lynx.tasm.LynxViewBuilder",
+		configuration.imports,
+		"",
+		"object LynxAndroidConnectorRegistry {",
+		"    fun register(builder: LynxViewBuilder) {",
+		configuration.registrations,
+		"    }",
+		"",
+		"    fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray): Boolean =",
+		`        ${configuration.permissionHandler}`,
+		"",
+		"    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean =",
+		`        ${configuration.activityHandler}`,
+		"}",
+		"",
+	].filter((line, index, lines) => line !== "" || lines[index - 1] !== "").join("\n");
+}
+
+function connectorConfigPath(projectRoot) {
+	return path.join(projectRoot, CONNECTOR_CONFIG_RELATIVE_PATH);
+}
+
+function connectorRegistryPath(androidDir, androidId) {
+	return path.join(androidDir, "app", "src", "main", "java", ...androidId.split("."), "LynxAndroidConnectorRegistry.kt");
+}
+
+function connectorDependencyBlock(pluginIds) {
+	return [
+		CONNECTOR_DEPENDENCY_START,
+		androidPluginHostConfiguration(pluginIds).gradleDependencies,
+		CONNECTOR_DEPENDENCY_END,
+	].join("\n");
+}
+
+function atomicWrite(filePath, contents) {
+	const temporaryPath = `${filePath}.tmp-${process.pid}`;
+	fs.writeFileSync(temporaryPath, contents);
+	fs.renameSync(temporaryPath, filePath);
+}
+
+function writeConnectorState({ projectRoot, androidDir, androidId, pluginIds }) {
+	const configPath = connectorConfigPath(projectRoot);
+	const registryPath = connectorRegistryPath(androidDir, androidId);
+	const gradlePath = path.join(androidDir, "app", "build.gradle.kts");
+	const gradleSource = fs.readFileSync(gradlePath, "utf8");
+	const start = gradleSource.indexOf(CONNECTOR_DEPENDENCY_START);
+	const end = gradleSource.indexOf(CONNECTOR_DEPENDENCY_END);
+	if (start === -1 || end === -1 || end < start || gradleSource.indexOf(CONNECTOR_DEPENDENCY_START, start + 1) !== -1) {
+		throw new Error("The Android connector dependency block is missing or was modified. No files were changed.");
+	}
+	const currentRegistry = fs.existsSync(registryPath) ? fs.readFileSync(registryPath, "utf8") : null;
+	const currentConfig = fs.existsSync(configPath) ? readConnectorConfig(configPath) : null;
+	const currentDependencyBlock = gradleSource.slice(start, end + CONNECTOR_DEPENDENCY_END.length);
+	if (currentConfig != null && normalizeSource(currentDependencyBlock) !== normalizeSource(connectorDependencyBlock(currentConfig.plugins))) {
+		throw new Error("The Android connector dependency block was modified outside the generator. No files were changed.");
+	}
+	if (currentRegistry != null && currentConfig != null) {
+		const expectedRegistry = buildAndroidConnectorRegistry(androidId, currentConfig.plugins);
+		if (normalizeSource(currentRegistry) !== normalizeSource(expectedRegistry)) {
+			throw new Error("LynxAndroidConnectorRegistry.kt was modified outside the generator. No files were changed.");
+		}
+	}
+	const updatedGradle = `${gradleSource.slice(0, start)}${connectorDependencyBlock(pluginIds)}${gradleSource.slice(end + CONNECTOR_DEPENDENCY_END.length)}`;
+	atomicWrite(gradlePath, updatedGradle);
+	atomicWrite(registryPath, buildAndroidConnectorRegistry(androidId, pluginIds));
+	fs.mkdirSync(path.dirname(configPath), { recursive: true });
+	atomicWrite(configPath, `${JSON.stringify({ version: 1, plugins: pluginIds }, null, 2)}\n`);
+}
+
+function readConnectorConfig(configPath) {
+	let config;
+	try {
+		config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+	} catch {
+		throw new Error("android/connectors.json is not valid JSON. No files were changed.");
+	}
+	if (config?.version !== 1 || !Array.isArray(config.plugins) || config.plugins.some((id) => typeof id !== "string")) {
+		throw new Error("android/connectors.json has an unsupported shape. No files were changed.");
+	}
+	return { plugins: normalizeAndroidPlugins(config.plugins) };
+}
+
+function requireManagedConnectorProject() {
+	const projectRoot = findProjectRoot(cwd);
+	if (projectRoot == null) throw new Error("No mithril-lynx project found here.");
+	const androidDir = findAndroidDir(projectRoot);
+	if (androidDir == null) throw new Error("No sibling Android host found for this project.");
+	const configPath = connectorConfigPath(projectRoot);
+	if (!fs.existsSync(configPath)) {
+		throw new Error(
+			"This Android host predates managed connectors or was customized. " +
+				"It is intentionally not patched automatically.",
+		);
+	}
+	const namespaceMatch = fs.readFileSync(path.join(androidDir, "app", "build.gradle.kts"), "utf8").match(/namespace\s*=\s*"([^"]+)"/);
+	if (namespaceMatch == null) throw new Error("Could not determine the Android namespace. No files were changed.");
+	return { projectRoot, androidDir, androidId: namespaceMatch[1], config: readConnectorConfig(configPath) };
+}
+
+async function runAndroidPluginCommand(command, args) {
+	intro(`create-mithril-lynx ${command}`);
+	let managed;
+	try {
+		managed = requireManagedConnectorProject();
+	} catch (error) {
+		cancel(error instanceof Error ? error.message : String(error));
+		process.exit(1);
+	}
+
+	if (command === "list-android-plugins") {
+		outro(
+			managed.config.plugins.length === 0
+				? "No Android connectors are enabled."
+				: `Enabled Android connectors: ${managed.config.plugins.join(", ")}`,
+		);
+		return;
+	}
+
+	const rawPlugins = args[0];
+	if (rawPlugins == null) {
+		cancel(`Pass a comma-separated connector list, e.g. ${command} battery,geolocation.`);
+		process.exit(1);
+	}
+	const requested = normalizeAndroidPlugins(splitList(rawPlugins));
+	const skipInstall = args.includes("--no-install");
+	let next;
+	if (command === "add-android-plugin") {
+		next = managed.config.plugins.includes("all") || requested.includes("all")
+			? ["all"]
+			: normalizeAndroidPlugins([...managed.config.plugins, ...requested]);
+	} else {
+		if (managed.config.plugins.includes("all") && !requested.includes("all")) {
+			cancel('The aggregate "all" connector must be removed as a whole.');
+			process.exit(1);
+		}
+		next = managed.config.plugins.filter((plugin) => !requested.includes(plugin));
+	}
+
+	try {
+		const npm = updatedConnectorPackageJson(managed.projectRoot, managed.config.plugins, next);
+		const previousPackageSource = fs.readFileSync(npm.packagePath, "utf8");
+		writeConnectorState({ ...managed, pluginIds: next });
+		ensureMapsConfiguration(managed.projectRoot, next);
+		if (npm.source !== previousPackageSource) {
+			atomicWrite(npm.packagePath, npm.source);
+			if (!skipInstall) {
+				const manager = projectPackageManager(managed.projectRoot);
+				try {
+					execFileSync(manager, ["install"], { cwd: managed.projectRoot, stdio: "inherit" });
+				} catch {
+					throw new Error(`Connector configuration was updated, but ${manager} install failed. Run it in the project to finish installation.`);
+				}
+			}
+		}
+	} catch (error) {
+		cancel(error instanceof Error ? error.message : String(error));
+		process.exit(1);
+	}
+	outro((next.length === 0 ? "No Android connectors are enabled." : `Enabled Android connectors: ${next.join(", ")}.`) +
+		(skipInstall ? `\nRun ${projectPackageManager(managed.projectRoot)} install to update dependencies.` : ""));
+}
+
 /** Renames `file` on any font past the first with the same basename, so
  * e.g. two different "Inter" downloads (different weights) don't collide
  * once copied into src/assets/fonts/. */
@@ -235,6 +579,7 @@ function parseAndroidArgs(args) {
 		fontPath: readOption(args, "with-font"),
 		fontFamily: readOption(args, "font-family"),
 		findFontTerm: readOption(args, "find-font"),
+		plugins: readOption(args, "android-plugins"),
 	};
 }
 
@@ -247,6 +592,7 @@ const OPTIONS_WITH_VALUE = new Set([
 	"--with-font",
 	"--font-family",
 	"--find-font",
+	"--android-plugins",
 ]);
 
 function findPositional(args) {
@@ -432,10 +778,24 @@ async function resolveAndroidOptions(android, { rawName, projectName, canPrompt 
 	}
 	appName = appName ?? path.basename(rawName);
 
+	let plugins = android.plugins == null ? [] : normalizeAndroidPlugins(splitList(android.plugins));
+	if (android.plugins == null && canPrompt) {
+		plugins = await multiselect({
+			message: "Which Lynx Android connectors should the host include?",
+			initialValues: [],
+			options: [
+				...ANDROID_PLUGINS.map((plugin) => ({ value: plugin.id, label: plugin.label, hint: plugin.hint })),
+				{ value: "all", label: "All connectors", hint: "convenience aggregate; includes every manifest contribution" },
+			],
+		});
+		if (isCancel(plugins)) return null;
+		plugins = normalizeAndroidPlugins(plugins);
+	}
+
 	const fonts = await resolveFontsFromFlags(android, { baseDir: cwd, requireFonts: false });
 	if (fonts == null) return null;
 
-	return { androidId, appName, fonts };
+	return { androidId, appName, fonts, plugins };
 }
 
 /**
@@ -604,7 +964,7 @@ async function runAddFont(args) {
 }
 
 function scaffoldAndroid({ targetDir, rawName, options }) {
-	const { androidId, appName, fonts } = options;
+	const { androidId, appName, fonts, plugins } = options;
 
 	const androidDirName = `${path.basename(rawName.replace(/^@[^/]+\//, ""))}-android`;
 	const androidDir = path.join(path.dirname(targetDir), androidDirName);
@@ -636,6 +996,8 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 	//    and templates/android/host/.../NoopGenericResourceFetcher.kt.
 	const sdkDir = findAndroidSdk();
 
+	const pluginHost = androidPluginHostConfiguration(plugins);
+
 	// 3. Text substitutions across the whole Android host (skipping the
 	//    gradle-wrapper.jar, the .ttf and any other binary).
 	replaceInTree(androidDir, [
@@ -643,6 +1005,7 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 		["{{APP_CLASS}}", appClass],
 		["{{APP_NAME}}", xmlEscape(appName)],
 		["{{ANDROID_DIR}}", androidDirName],
+		["{{ANDROID_PLUGIN_DEPENDENCIES}}", pluginHost.gradleDependencies],
 		[
 			"{{SDK_DIR}}",
 			sdkDir != null
@@ -666,7 +1029,13 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 	// these exact files back into their Android resource locations.
 	seedAndroidDevelopmentFiles(targetDir, androidDir);
 
-	// 6. The scripts that join the two halves, inside the JS project.
+	// 6. Connector state belongs to the generator. Post-install commands only
+	// rewrite this registry and the marked Gradle dependency block, never user
+	// application files such as MainActivity.kt.
+	writeConnectorState({ projectRoot: targetDir, androidDir, androidId, pluginIds: plugins });
+	ensureMapsConfiguration(targetDir, plugins);
+
+	// 7. The scripts that join the two halves, inside the JS project.
 	const scriptsDir = path.join(targetDir, "scripts");
 	fs.mkdirSync(scriptsDir, { recursive: true });
 	fs.copyFileSync(path.join(ANDROID_TEMPLATE_ROOT, "app-scripts", "android.mjs"), path.join(scriptsDir, "android.mjs"));
@@ -682,13 +1051,14 @@ function scaffoldAndroid({ targetDir, rawName, options }) {
 	]);
 	replaceInFile(path.join(scriptsDir, "android-prepare.mjs"), [["{{ANDROID_REL_DIR}}", androidRelDir]]);
 
-	return { androidDir, androidDirName, androidRelDir, androidId, appName, appClass, fonts, sdkDir };
+	return { androidDir, androidDirName, androidRelDir, androidId, appName, appClass, fonts, plugins: pluginHost.pluginIds, sdkDir };
 }
 
 function patchJsProject({ targetDir, android }) {
 	// package.json: the Android scripts.
 	const pkgPath = path.join(targetDir, "package.json");
 	const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+	for (const name of connectorNpmPackages(android.plugins)) pkg.dependencies[name] = LYNX_ANDROID_JS_VERSION;
 	const buildCommand = pkg.scripts.build;
 	pkg.scripts = {
 		...pkg.scripts,
@@ -745,6 +1115,9 @@ function patchJsProject({ targetDir, android }) {
 			`- Application class: \`${android.appClass}\` · Activity: \`MainActivity\``,
 			"- Android XML: edit `android/*.xml`; every `bun run build` synchronizes those files to the sibling host before bundling. Run `bun run android:prepare` when you only need the synchronization.",
 			"- Android system Back bridge: the host pre-registers `MithrilLynxNavigationModule`; connect a `mithril-lynx/route` app with `route.listenBackButton({ onCanGoBackChange: (value) => NativeModules.MithrilLynxNavigationModule?.setCanGoBack(value) })`. The Basic Activity template is already connected.",
+			android.plugins.length > 0
+				? `- Android connectors: ${android.plugins.join(", ")}. The host registers the native modules and package.json includes their typed JavaScript facades. See [lynx-android-plugins](https://github.com/carlos-sweb/lynx-android-plugins#javascript-facades).`
+				: "- Android connectors: none selected. Regenerate with `--android-plugins <name>` to opt into one.",
 			...android.fonts.map(
 				(f) =>
 					`- Font \`${f.family}\` (\`src/assets/fonts/${f.file}\`): \`lynx.addFont()\` — DEV inlines a \`data:\` URI for Lynx Go; PROD uses \`asset:///fonts/${f.file}\` via \`AssetFontFaceLoader\` ([lynx#9431](https://github.com/lynx-family/lynx/issues/9431)).`,
@@ -752,6 +1125,79 @@ function patchJsProject({ targetDir, android }) {
 			"",
 		].join("\n");
 		fs.appendFileSync(readmePath, section);
+	}
+}
+
+function addUiThemeClass(source, rootClass, themeClass, sourcePath) {
+	const themedClass = `class: "${rootClass} ${themeClass}"`;
+	if (source.includes(themedClass)) return source;
+
+	const currentClass = `class: "${rootClass}"`;
+	const index = source.indexOf(currentClass);
+	if (index === -1) {
+		throw new Error(`Cannot configure mithril-lynx-ui: expected root class ${JSON.stringify(rootClass)} in ${sourcePath}.`);
+	}
+	return `${source.slice(0, index)}${themedClass}${source.slice(index + currentClass.length)}`;
+}
+
+function patchUiProject({ targetDir, template }) {
+	const templateUi = {
+		"hello-world": {
+			themeClass: "luna-dark",
+			roots: [{ file: "src/index.ts", className: "App" }],
+		},
+		blank: {
+			themeClass: "luna-light",
+			roots: [{ file: "src/index.ts", className: "Page" }],
+		},
+		"basic-activity": {
+			themeClass: "luna-light",
+			roots: ["home", "detail"].map((screen) => ({
+				file: `src/screens/${screen}.ts`,
+				className: "Page",
+			})),
+		},
+	}[template];
+	if (templateUi == null) throw new Error(`Cannot configure mithril-lynx-ui for unknown template "${template}".`);
+
+	const packagePath = path.join(targetDir, "package.json");
+	const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+	packageJson.dependencies ??= {};
+	packageJson.dependencies["mithril-lynx-ui"] = MITHRIL_LYNX_UI_VERSION;
+
+	const stylesheetPath = path.join(targetDir, "src", "style.css");
+	const stylesheet = fs.readFileSync(stylesheetPath, "utf8");
+	const updatedStylesheet = stylesheet.includes(MITHRIL_LYNX_UI_STYLES_IMPORT)
+		? stylesheet
+		: `${MITHRIL_LYNX_UI_STYLES_IMPORT}\n\n${stylesheet}`;
+
+	const themedSources = templateUi.roots.map(({ file, className }) => {
+		const sourcePath = path.join(targetDir, file);
+		const source = fs.readFileSync(sourcePath, "utf8");
+		return [sourcePath, addUiThemeClass(source, className, templateUi.themeClass, file)];
+	});
+
+	fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+	if (updatedStylesheet !== stylesheet) fs.writeFileSync(stylesheetPath, updatedStylesheet);
+	for (const [sourcePath, source] of themedSources) fs.writeFileSync(sourcePath, source);
+
+	const readmePath = path.join(targetDir, "README.md");
+	if (fs.existsSync(readmePath)) {
+		const readme = fs.readFileSync(readmePath, "utf8");
+		if (!readme.includes("## UI components")) {
+			const section = [
+				"",
+				"## UI components",
+				"",
+				`This project was scaffolded with \`mithril-lynx-ui\`. Its stylesheet is imported from \`src/style.css\`, and the app root uses the \`${templateUi.themeClass}\` Luna theme.`,
+				"",
+				"Import components from their package entry points, for example `import { Button } from \"mithril-lynx-ui/button\";`. Components are headless by default; add their documented `ui-*` classes to opt into the supplied styles.",
+				"",
+				"See the [mithril-lynx-ui documentation](https://github.com/carlos-sweb/mithril-lynx-ui#readme) for component APIs and styling details.",
+				"",
+			].join("\n");
+			fs.appendFileSync(readmePath, section);
+		}
 	}
 }
 
@@ -763,17 +1209,26 @@ create-mithril-lynx — scaffold a mithril-lynx app (and, optionally, its Androi
 Usage:
   npm create mithril-lynx@latest [name] [options]
   npx create-mithril-lynx <name> --blank --android
+  npx create-mithril-lynx <name> --blank --with-ui
   npx create-mithril-lynx add-font --with-font ./Foo.ttf
   npx create-mithril-lynx add-font --find-font Inter
+  npx create-mithril-lynx add-android-plugin battery,geolocation
 
 Template (prompted for if omitted):
   --hello-world | --blank | --basic-activity
 
+UI components:
+  --with-ui                 add mithril-lynx-ui and import its stylesheet;
+                            offered during interactive setup
+
 Android host:
-  --android, --target android, target=android
+  --android, --target android, --target=android, target=android
                             scaffold the sibling Gradle project <name>-android/
   --android-id <id>         applicationId / namespace (default com.example.<name>)
   --app-name <name>         launcher label (default: the project name)
+  --android-plugins <list>  native connectors to include: battery, camera,
+                            device, geolocation, network, vibration, maps, or all.
+                            Comma-separate individual connectors.
   --with-font <file.ttf>    bundle the font into the JS project and register it
                             with lynx.addFont() (DEV: data: URI for Lynx Go;
                             PROD: asset:/// + AssetFontFaceLoader — see README).
@@ -796,9 +1251,14 @@ Post-init (run inside an existing app directory):
                             print the lines to paste by hand.
                             Same --with-font / --find-font / --font-family
                             flags as above.
+  add-android-plugin <list> add managed Android connector(s)
+  remove-android-plugin <list>
+                            remove managed Android connector(s)
+  list-android-plugins      show managed Android connectors
 
 Other:
-  --no-install              don't install dependencies
+  --no-install              don't install dependencies during scaffold or
+                            post-init connector changes
   -h, --help                print this
 `.trim();
 
@@ -820,16 +1280,20 @@ async function main() {
 		await runAddFont(args.slice(1));
 		return;
 	}
+	if (["add-android-plugin", "remove-android-plugin", "list-android-plugins"].includes(args[0])) {
+		await runAndroidPluginCommand(args[0], args.slice(1));
+		return;
+	}
 
 	const positional = findPositional(args);
 	const templateFlag = TEMPLATE_VALUES.find((t) => args.includes(`--${t}`));
 	const noInstall = args.includes("--no-install");
+	let withUi = args.includes("--with-ui");
 	const nonInteractive = positional != null && templateFlag != null;
 	const android = parseAndroidArgs(args);
 
-	// --with-font/--find-font/--font-family only make sense with an Android
-	// host: imply it rather than ignoring them silently.
-	if (android.fontPath != null || android.findFontTerm != null || android.fontFamily != null) {
+	// Android-only options imply the host rather than being silently ignored.
+	if (android.fontPath != null || android.findFontTerm != null || android.fontFamily != null || android.plugins != null) {
 		android.requested = true;
 	}
 
@@ -865,6 +1329,14 @@ async function main() {
 			options: TEMPLATES,
 		});
 		if (isCancel(template)) return bail();
+	}
+
+	if (!withUi && !nonInteractive) {
+		withUi = await confirm({
+			message: "Include mithril-lynx-ui components?",
+			initialValue: false,
+		});
+		if (isCancel(withUi)) return bail();
 	}
 
 	let withAndroid = android.requested;
@@ -906,6 +1378,8 @@ async function main() {
 		["{{MITHRIL_LYNX_VERSION}}", MITHRIL_LYNX_VERSION],
 	]);
 	replaceInFile(path.join(targetDir, "README.md"), [["{{PROJECT_NAME}}", projectName]]);
+
+	if (withUi) patchUiProject({ targetDir, template });
 
 	let androidResult = null;
 	if (withAndroid) {

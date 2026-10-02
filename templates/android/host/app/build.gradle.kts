@@ -98,6 +98,10 @@ dependencies {
     // gesture then never works).
     implementation("androidx.viewpager2:viewpager2:1.1.0")
 
+    // <create-mithril-lynx:android-connectors>
+{{ANDROID_PLUGIN_DEPENDENCIES}}
+    // </create-mithril-lynx:android-connectors>
+
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.core:core-splashscreen:1.0.1")
 }

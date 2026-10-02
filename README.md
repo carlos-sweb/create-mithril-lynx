@@ -32,29 +32,121 @@ npm install
 npm run android          # bundle -> assets -> installDebug -> launch on the device
 ```
 
+### With Android connectors
+
+Android projects can opt into the published
+[`lynx-android-plugins`](https://github.com/carlos-sweb/lynx-android-plugins)
+artifacts at scaffold time. The generator adds the selected Maven libraries,
+their JavaScript facade packages, manifest contributions, native-module
+registrations, and the Activity callbacks required for camera and geolocation.
+
+```bash
+npx create-mithril-lynx my-app --blank --android \
+  --android-plugins battery,geolocation,network
+```
+
+Available connector names are `battery`, `camera`, `device`, `geolocation`,
+`network`, `vibration`, `maps`, and `all`. The interactive Android flow offers the
+same selection. `all` deliberately includes every manifest contribution;
+prefer individual names for production apps.
+
+The generated project receives the `lynx-android-plugins` JavaScript package
+with a small typed API for each selected feature. For example,
+`import { gps } from "lynx-android-plugins/geolocation"`
+followed by `await gps.get({ highAccuracy: true })` returns one location.
+See the [JavaScript facades](https://github.com/carlos-sweb/lynx-android-plugins#javascript-facades)
+for the complete API.
+
+For offline maps, select `--android-plugins maps` (or add `maps` after
+scaffolding). This creates `android/maps.json`. Supply the HTTPS URL, SHA-256,
+and version of a Chile PMTiles archive there. Every build runs
+`android:prepare` first and copies that config into the Android host. Import
+`Maps` from `lynx-android-plugins/maps` and render it inside a sized parent:
+
+```ts
+import { Maps } from "lynx-android-plugins/maps";
+m(Maps, { latitude: -33.532290, longitude: -71.584904, variant: "full" });
+```
+
+The map is downloaded only when the user taps the native download button.
+Afterward it renders offline. The archive must be hosted by the app developer;
+this project does not offer a public map-tile service. The Maps module is
+prepared for Maven/npm version `0.2.0` and is not usable from the published
+`0.1.0` artifacts.
+
+### Add connectors after scaffolding
+
+Projects generated with this version can update their selected connectors
+without recreating the app:
+
+```bash
+cd my-app
+npx create-mithril-lynx add-android-plugin battery,geolocation
+npx create-mithril-lynx remove-android-plugin battery
+npx create-mithril-lynx list-android-plugins
+```
+
+The generator stores its selection in `android/connectors.json`, rewrites its
+own Gradle dependency block and `LynxAndroidConnectorRegistry.kt`, adds or
+removes the `lynx-android-plugins` dependency in `package.json`, and runs the detected
+package manager's install command when they change. A custom facade version,
+a modified native block, or an Android host predating this workflow causes
+the command to stop without replacing those edits.
+Use `--no-install` after an add/remove command to update configuration without
+running the package manager immediately.
+
 The interactive prompt offers it too, and the literal `target=android` form works as well:
 
 ```bash
 npm create mithril-lynx@latest my-app target=android
 ```
 
-Every flag, in one table — `npx create-mithril-lynx --help` prints the same list:
+### CLI reference
+
+These are the project-creation flags. Run `npx create-mithril-lynx --help` to
+see them together with the post-scaffold commands below.
 
 | Flag | Effect |
 |---|---|
 | `<name>` (positional) | Project name, and the directory to create. Omit it and you're prompted. |
 | `--hello-world` / `--blank` / `--basic-activity` | Template to scaffold. Omit it and you're prompted. |
-| `--no-install` | Don't install dependencies (also skips that prompt). |
+| `--no-install` | Skip dependency installation after scaffolding; also skips the install prompt. For connector commands, prevents the package manager from running. |
 | `-h`, `--help` | Print usage and exit. |
+| `--with-ui` | Add `mithril-lynx-ui` and import its stylesheet. Offered during interactive setup; works independently of `--android`. |
 | `--android` / `--target android` / `--target=android` / `target=android` | Also scaffold the sibling `<name>-android/` Gradle project. |
 | `--android-id <id>` | `applicationId` / `namespace` (default `com.example.<name>`). |
 | `--app-name <name>` | Launcher label (default: the project name). |
+| `--android-plugins <list>` | Android connectors to include: comma-separated `battery`, `camera`, `device`, `geolocation`, `network`, `vibration`, `maps`, or `all`. Implies `--android`. |
 | `--with-font <file.ttf>` | Bundle the font into `src/assets/fonts/` and register it with `lynx.addFont()` in a loop. **DEV** (`npm run dev` / Lynx Go): `require()` inlines a `data:` URI so the font shows up in Explorer. **PROD** (`npm run build` / APK): `asset:///fonts/<file>` resolved by `AssetFontFaceLoader` on the host (keeps the bundle small — embedding `data:` URIs in the APK re-introduces the cold-start cost tracked in [lynx#9431](https://github.com/lynx-family/lynx/issues/9431)). Comma-separate for more than one file. |
 | `--find-font <term>` | Search [Fontsource](https://fontsource.org)'s catalog for `<term>`, prompt you to pick a family and one or more weights/styles, download each `.ttf`, and bundle them exactly like `--with-font`. Needs a real terminal (the picking is inherently interactive — use `--with-font <file.ttf>` in scripts/CI). Mutually exclusive with `--with-font`. Comma-separate terms for more than one — quote the whole thing if any term has a space. |
 | `--font-family <name>` | Override the family name derived from the font's file name (or from Fontsource, with `--find-font`). Only valid with exactly one font. |
 
-Anything not listed — in particular the four Android flags — requires `--android`
-(or one of its aliases); `--with-font`/`--find-font` imply it on their own.
+`--android-id` and `--app-name` configure the host when one is generated.
+`--android-plugins` and the font flags imply `--android`; `--with-ui` works
+with or without the Android host.
+
+### Commands for an existing project
+
+Run these from the generated app directory. Connector commands require an
+Android host created by this tool and manage only the generated connector
+configuration.
+
+| Command | Arguments and options | Effect |
+|---|---|---|
+| `add-font` | `--with-font <file.ttf>` or `--find-font <term>`; optional `--font-family <name>` | Add fonts to the existing app and wire up the generated font registration and CSS. Font options are the same as during scaffolding. |
+| `add-android-plugin` | `<list>`; optional `--no-install` | Add comma-separated Android connectors (the same names as `--android-plugins`) and update dependencies. `--no-install` leaves dependency installation to you. |
+| `remove-android-plugin` | `<list>`; optional `--no-install` | Remove managed connectors and update dependencies. If `all` is enabled, remove `all` as a whole. |
+| `list-android-plugins` | — | Show the connectors currently enabled for the Android host. |
+
+### UI components
+
+Add `mithril-lynx-ui` to a new app and import its stylesheet with:
+
+```bash
+npx create-mithril-lynx my-app --blank --with-ui
+```
+
+For component APIs and styling, see the [`mithril-lynx-ui` documentation](https://github.com/carlos-sweb/mithril-lynx-ui#readme).
 
 ### More than one font
 
@@ -126,6 +218,7 @@ The sibling `<name>-android/` project is a complete, no-Android-Studio Gradle CL
 - `local.properties` with `sdk.dir` auto-detected from `ANDROID_HOME`/`ANDROID_SDK_ROOT` (with a written warning if it can't be found);
 - the Kotlin host: the `Application` (registers `AssetFontFaceLoader`), `MainActivity` (async `AssetTemplateProvider`, splash screen, `NoopGenericResourceFetcher` for the fast `data:` font path — [lynx#9431](https://github.com/lynx-family/lynx/issues/9431)), and a predefined native bridge for `mithril-lynx/route`'s Android system Back support;
 - a project-local `android/` folder with editable `AndroidManifest.xml`, `strings.xml`, `styles.xml`, `config.xml`, `network_security_config.xml`, and `file_paths.xml`, plus `bun run android:prepare` to copy them into the Gradle host;
+- opt-in Maven Central connectors for battery, camera, device, geolocation, network, vibration, and maps, each registered only when selected with `--android-plugins`;
 - an opt-in release signing setup driven by a gitignored `keystore.properties`.
 
 And in the JS project, a `scripts/android.mjs` bridge plus npm scripts:
@@ -135,7 +228,7 @@ npm run android            # build + sync + installDebug + launch, printing Tota
 npm run android:apk        # build + sync + assembleDebug
 npm run android:release    # build + sync + assembleRelease (signed if keystore.properties exists)
 npm run android:sync       # build + sync bundle into app/src/main/assets/, no Gradle
-bun run android:prepare    # manually sync android/*.xml -> sibling Android host
+bun run android:prepare    # manually sync android/*.xml and maps.json -> sibling Android host
 npm run android:keystore   # generate release.keystore + keystore.properties (KEYSTORE_PASSWORD=...)
 ```
 
@@ -183,7 +276,25 @@ create-mithril-lynx/
 
 `src/index.js` copies, in order, `templates/_shared/common` → `templates/_shared/ts` → `templates/<template>/common` → `templates/<template>/ts` into the target directory — later copies overwrite same-named files from earlier ones, which is exactly how **Basic Activity**'s own routing-based `src/background.ts` replaces `_shared/ts`'s generic single-view one (Hello World and Blank don't ship their own, so they keep the shared file). It then renames `gitignore` to `.gitignore` (npm doesn't publish dotfiles reliably otherwise) and replaces `{{PROJECT_NAME}}`/`{{MITHRIL_LYNX_VERSION}}` placeholders in `package.json` and `README.md`.
 
-With `--android` it then copies `templates/android/host` into a sibling `<name>-android/` (renaming `package-path` to the real package directory and `App.kt` to the Application class) and substitutes `{{PACKAGE_NAME}}`, `{{APP_CLASS}}`, `{{APP_NAME}}`, `{{ANDROID_DIR}}` and `{{SDK_DIR}}` across the tree. It also seeds the generated project's `android/` folder with `AndroidManifest.xml`, `strings.xml`, `styles.xml`, `config.xml`, `network_security_config.xml`, and `file_paths.xml`. `bun run build` (and the Android build commands that invoke it) automatically synchronizes those local copies to the Gradle host first; use `bun run android:prepare` (or `npm run android:prepare`) when you only want that synchronization. Binary files (the Gradle wrapper jar, a `--with-font` `.ttf`) are never text-substituted. With `--with-font`, each font is copied into the JS project (`src/assets/fonts/`) *and* seeded into the Android host's `assets/fonts/`, wired up with a `FONTS` loop + `lynx.addFont()` in `src/background.ts` plus a generated `src/fonts.css` (`text { font-family }` for the first font, one class per font when there are several) imported from `src/style.css`. `scripts/android.mjs` keeps `assets/fonts/` in sync on every `npm run android` / `android:sync`.
+Scaffolding handles the Android host and fonts as follows:
+
+1. **Android host (`--android`)**
+   - Copies `templates/android/host` into a sibling `<name>-android/` project.
+   - Renames `package-path` to the generated package directory and `App.kt` to the application class.
+   - Replaces `{{PACKAGE_NAME}}`, `{{APP_CLASS}}`, `{{APP_NAME}}`, `{{ANDROID_DIR}}` and `{{SDK_DIR}}` placeholders.
+   - Seeds the app's editable `android/` folder with `AndroidManifest.xml`, `strings.xml`, `styles.xml`, `config.xml`, `network_security_config.xml` and `file_paths.xml`.
+
+2. **Android preparation**
+   - `bun run build` and Android build commands run `android:prepare` before building, copying the editable config files into the Gradle host.
+   - To copy the files without building, run `bun run android:prepare` (or `npm run android:prepare`).
+
+3. **Fonts (`--with-font`)**
+   - Copies each `.ttf` into `src/assets/fonts/` and registers it from `src/background.ts` with a generated `FONTS` loop and `lynx.addFont()`.
+   - Generates `src/fonts.css`, imported by `src/style.css`; it sets the first font as the default `text` font and creates a class for each font variant.
+   - When an Android host exists, also copies fonts into its `assets/fonts/`. `scripts/android.mjs` syncs that folder during `npm run android` and `npm run android:sync`.
+
+4. **Binary files**
+   - The Gradle wrapper JAR and font `.ttf` files are copied as binary assets; placeholder substitution does not modify them.
 
 **Not carried over from v1 (yet)**: the JavaScript variant. The old tool generated either TypeScript or JavaScript for every template; this rewrite ships TypeScript only for now — doubling every template for a parallel JS copy wasn't part of this pass.
 

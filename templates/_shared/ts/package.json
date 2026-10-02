@@ -9,7 +9,7 @@
     "preview": "rspeedy preview"
   },
   "dependencies": {
-    "mithril-runtime": "^1.1.0",
+    "mithril-runtime": "latest",
     "mithril-lynx": "{{MITHRIL_LYNX_VERSION}}"
   },
   "devDependencies": {

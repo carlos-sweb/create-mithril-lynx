@@ -1,5 +1,6 @@
 package {{PACKAGE_NAME}}
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -27,6 +28,7 @@ class MainActivity : AppCompatActivity() {
         // Lets mithril-lynx/route tell Android when its in-memory history can
         // handle Back. See MithrilLynxNavigationModule and the callback below.
         builder.registerModule("MithrilLynxNavigationModule", MithrilLynxNavigationModule::class.java)
+        LynxAndroidConnectorRegistry.register(builder)
         // lynx-family/lynx's own explorer/android registers a
         // GenericResourceFetcher unconditionally (LynxViewShellActivity —
         // "used inside LynxEngine for resource loading capabilities of
@@ -63,6 +65,17 @@ class MainActivity : AppCompatActivity() {
 
     fun setCanGoBack(canGoBack: Boolean) {
         backCallback?.isEnabled = canGoBack
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        if (LynxAndroidConnectorRegistry.onRequestPermissionsResult(requestCode, permissions, grantResults)) return
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
+    @Deprecated("Needed for the external camera intent result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (LynxAndroidConnectorRegistry.onActivityResult(requestCode, resultCode, data)) return
+        super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onDestroy() {

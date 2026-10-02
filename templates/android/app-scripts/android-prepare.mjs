@@ -42,4 +42,12 @@ for (const [name, destination] of files) {
 	console.log(`  → ${path.relative(projectRoot, target)}`);
 }
 
+const mapsConfig = path.join(sourceDir, "maps.json");
+if (fs.existsSync(mapsConfig)) {
+	const mapsTarget = path.join(androidDir, "app", "src", "main", "assets", "lynx_maps", "config.json");
+	fs.mkdirSync(path.dirname(mapsTarget), { recursive: true });
+	fs.copyFileSync(mapsConfig, mapsTarget);
+	console.log(`  → ${path.relative(projectRoot, mapsTarget)}`);
+}
+
 console.log("\n  ✔ Android resources prepared.\n");
