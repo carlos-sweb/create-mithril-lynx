@@ -86,14 +86,20 @@ npx create-mithril-lynx remove-android-plugin battery
 npx create-mithril-lynx list-android-plugins
 ```
 
-The generator stores its selection in `android/connectors.json`, rewrites its
-own Gradle dependency block and `LynxAndroidConnectorRegistry.kt`, adds or
-removes the `lynx-android-plugins` dependency in `package.json`, and runs the detected
-package manager's install command when they change. A custom facade version,
-a modified native block, or an Android host predating this workflow causes
-the command to stop without replacing those edits.
+The generator stores its selection in `android/connectors.json` and updates its
+own Gradle dependency block, connector registry, and marked connector sections
+of `MainActivity.kt`. It generates permission and activity callbacks only for
+connectors that need them; with no connectors, it removes the generated
+registry. It also adds or removes the `lynx-android-plugins` dependency in
+`package.json` and runs the detected package manager's install command when
+that dependency changes. Existing managed hosts are migrated when their old
+generated connector code is unchanged. A custom facade version, a modified
+managed block, or an older host without `android/connectors.json` causes the
+command to stop before replacing those edits.
 Use `--no-install` after an add/remove command to update configuration without
 running the package manager immediately.
+To refresh an existing host without changing its selection, add an already
+enabled connector again (for example, `add-android-plugin battery --no-install`).
 
 The interactive prompt offers it too, and the literal `target=android` form works as well:
 
