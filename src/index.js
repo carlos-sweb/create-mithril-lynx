@@ -38,7 +38,11 @@ const TEMPLATES = [
 const TEMPLATE_VALUES = TEMPLATES.map((t) => t.value);
 
 const ANDROID_TEMPLATE_ROOT = path.join(packageRoot, "templates", "android");
-const LYNX_ANDROID_PLUGINS_VERSION = "0.2.0";
+const LYNX_ANDROID_PLUGINS_VERSION = "0.4.0";
+const LYNX_ANDROID_LEGACY_VERSIONS = [
+	{ plugins: "0.2.0", sqlite: "0.3.0", aggregate: "0.3.0" },
+	{ plugins: "0.2.0", sqlite: "0.3.0", aggregate: "0.2.0" },
+];
 const LYNX_ANDROID_JS_VERSION = "latest";
 const LYNX_ANDROID_JS_LEGACY_VERSIONS = new Set(["^0.2.0"]);
 
@@ -101,6 +105,14 @@ const ANDROID_PLUGINS = [
 		kotlinImport: "dev.lynx.android.plugins.maps.LynxMapsPlugin",
 		registry: "LynxMapsPlugin",
 		permissionResult: true,
+	},
+	{
+		id: "sqlite",
+		label: "SQLite",
+		hint: "app-private SQL database · no permission",
+		artifact: "lynx-android-sqlite",
+		kotlinImport: "dev.lynx.android.plugins.sqlite.LynxSqlitePlugin",
+		registry: "LynxSqlitePlugin",
 	},
 ];
 const ANDROID_PLUGIN_BY_ID = new Map(ANDROID_PLUGINS.map((plugin) => [plugin.id, plugin]));
@@ -326,13 +338,17 @@ function projectPackageManager(projectRoot) {
 	return detectPackageManager();
 }
 
-function androidPluginHostConfiguration(pluginIds) {
+function androidPluginHostConfiguration(pluginIds, versions = {
+	plugins: LYNX_ANDROID_PLUGINS_VERSION,
+	sqlite: LYNX_ANDROID_PLUGINS_VERSION,
+	aggregate: LYNX_ANDROID_PLUGINS_VERSION,
+}) {
 	const useAggregate = pluginIds.includes("all");
 	const plugins = useAggregate ? ANDROID_PLUGINS : pluginIds.map((id) => ANDROID_PLUGIN_BY_ID.get(id));
 	const gradleDependencies = useAggregate
-		? `    implementation("io.github.carlos-sweb:lynx-android-plugins:${LYNX_ANDROID_PLUGINS_VERSION}")`
+		? `    implementation("io.github.carlos-sweb:lynx-android-plugins:${versions.aggregate}")`
 		: plugins.map((plugin) =>
-			`    implementation("io.github.carlos-sweb:${plugin.artifact}:${LYNX_ANDROID_PLUGINS_VERSION}")`,
+			`    implementation("io.github.carlos-sweb:${plugin.artifact}:${plugin.id === "sqlite" ? versions.sqlite : versions.plugins}")`,
 		).join("\n");
 	const imports = useAggregate
 		? ["import dev.lynx.android.plugins.LynxAndroidPlugins"]
@@ -523,10 +539,10 @@ function connectorRegistryPath(androidDir, androidId) {
 	return path.join(androidDir, "app", "src", "main", "java", ...androidId.split("."), "LynxAndroidConnectorRegistry.kt");
 }
 
-function connectorDependencyBlock(pluginIds) {
+function connectorDependencyBlock(pluginIds, versions) {
 	return [
 		CONNECTOR_DEPENDENCY_START,
-		androidPluginHostConfiguration(pluginIds).gradleDependencies,
+		androidPluginHostConfiguration(pluginIds, versions).gradleDependencies,
 		CONNECTOR_DEPENDENCY_END,
 	].join("\n");
 }
@@ -555,7 +571,12 @@ function connectorStateUpdates({ projectRoot, androidDir, androidId, pluginIds }
 	const mainActivityEol = mainActivitySource.includes("\r\n") ? "\r\n" : "\n";
 	const preparedMainActivity = prepareMainActivity(mainActivitySource.replace(/\r\n/g, "\n"), currentConfig?.plugins ?? null);
 	const currentDependencyBlock = gradleSource.slice(start, end + CONNECTOR_DEPENDENCY_END.length);
-	if (currentConfig != null && normalizeSource(currentDependencyBlock) !== normalizeSource(connectorDependencyBlock(currentConfig.plugins))) {
+	const managedDependencyBlocks = currentConfig == null ? [] : [
+		connectorDependencyBlock(currentConfig.plugins),
+		...LYNX_ANDROID_LEGACY_VERSIONS.map((versions) => connectorDependencyBlock(currentConfig.plugins, versions)),
+	];
+	if (currentConfig != null && !managedDependencyBlocks.some((block) =>
+		normalizeSource(currentDependencyBlock) === normalizeSource(block))) {
 		throw new Error("The Android connector dependency block was modified outside the generator. No files were changed.");
 	}
 	const expectedRegistry = currentConfig == null ? null : preparedMainActivity.legacy
@@ -956,6 +977,46 @@ async function findFontInteractively(term) {
 	return results;
 }
 
+/** Prompt for any number of Fontsource families during interactive scaffolding. */
+async function addFontsInteractively() {
+	const fonts = [];
+	let addAnother = await confirm({
+		message: "Would you like to add fonts?",
+		initialValue: false,
+	});
+	if (isCancel(addAnother)) return null;
+
+	while (addAnother) {
+		const term = await text({
+			message: "Search for a font",
+			placeholder: "e.g. Inter",
+			validate(value) {
+				if (!value?.trim()) return "Enter a font name to search.";
+			},
+		});
+		if (isCancel(term)) return null;
+
+		const selected = await findFontInteractively(term.trim());
+		if (selected == null) return null;
+		fonts.push(
+			...selected.map((font) => ({
+				sourcePath: font.sourcePath,
+				file: path.basename(font.sourcePath),
+				family: font.family,
+			})),
+		);
+		dedupeFontFiles(fonts);
+
+		addAnother = await confirm({
+			message: "Would you like to add another font?",
+			initialValue: false,
+		});
+		if (isCancel(addAnother)) return null;
+	}
+
+	return fonts;
+}
+
 // ---------------------------------------------------------------------------
 // Android host scaffolding
 // ---------------------------------------------------------------------------
@@ -1015,6 +1076,12 @@ async function resolveAndroidOptions(android, { rawName, projectName, canPrompt 
 
 	const fonts = await resolveFontsFromFlags(android, { baseDir: cwd, requireFonts: false });
 	if (fonts == null) return null;
+	if (canPrompt && android.fontPath == null && android.findFontTerm == null) {
+		const interactiveFonts = await addFontsInteractively();
+		if (interactiveFonts == null) return null;
+		fonts.push(...interactiveFonts);
+		dedupeFontFiles(fonts);
+	}
 
 	return { androidId, appName, fonts, plugins };
 }
@@ -1449,7 +1516,8 @@ Android host:
   --android-id <id>         applicationId / namespace (default com.example.<name>)
   --app-name <name>         launcher label (default: the project name)
   --android-plugins <list>  native connectors to include: battery, camera,
-                            device, geolocation, network, vibration, maps, or all.
+                            device, geolocation, network, vibration, maps,
+                            sqlite, or all.
                             Comma-separate individual connectors.
   --with-font <file.ttf>    bundle the font into the JS project and register it
                             with lynx.addFont() (DEV: data: URI for Lynx Go;

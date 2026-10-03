@@ -46,9 +46,15 @@ npx create-mithril-lynx my-app --blank --android \
 ```
 
 Available connector names are `battery`, `camera`, `device`, `geolocation`,
-`network`, `vibration`, `maps`, and `all`. The interactive Android flow offers the
+`network`, `vibration`, `maps`, `sqlite`, and `all`. The interactive Android flow offers the
 same selection. `all` deliberately includes every manifest contribution;
 prefer individual names for production apps.
+
+The generated Android host declares Maven Central dependencies at version
+`0.4.0`, including `io.github.carlos-sweb:lynx-android-plugins:0.4.0` for `all`
+and the individual connector artifacts when selecting specific names.
+Adding or removing connectors also upgrades managed dependencies from the
+previous template versions (`0.2.0`, or `0.3.0` for SQLite and `all`).
 
 The generated project receives the `lynx-android-plugins` JavaScript package
 with a small typed API for each selected feature. For example,
@@ -73,6 +79,14 @@ Afterward it renders offline. The archive must be hosted by the app developer;
 this project does not offer a public map-tile service. The Maps module is
 prepared for Maven/npm version `0.2.0` and is not usable from the published
 `0.1.0` artifacts.
+
+For app-private SQLite storage, select `sqlite` and import
+`sqlite` from `lynx-android-plugins/sqlite`. Calls are asynchronous and run in
+the generated Android host; they do not run in stock Lynx Go. See the
+[SQLite connector guide](https://github.com/carlos-sweb/lynx-android-plugins/blob/main/docs/sqlite.md)
+for SQL parameters, migrations, transactions, and result types. The generated
+host uses Maven version `0.4.0` for SQLite and `all`, and installs the JavaScript
+facade from the latest npm release of `lynx-android-plugins`.
 
 ### Add connectors after scaffolding
 
@@ -122,7 +136,7 @@ see them together with the post-scaffold commands below.
 | `--android` / `--target android` / `--target=android` / `target=android` | Also scaffold the sibling `<name>-android/` Gradle project. |
 | `--android-id <id>` | `applicationId` / `namespace` (default `com.example.<name>`). |
 | `--app-name <name>` | Launcher label (default: the project name). |
-| `--android-plugins <list>` | Android connectors to include: comma-separated `battery`, `camera`, `device`, `geolocation`, `network`, `vibration`, `maps`, or `all`. Implies `--android`. |
+| `--android-plugins <list>` | Android connectors to include: comma-separated `battery`, `camera`, `device`, `geolocation`, `network`, `vibration`, `maps`, `sqlite`, or `all`. Implies `--android`. |
 | `--with-font <file.ttf>` | Bundle the font into `src/assets/fonts/` and register it with `lynx.addFont()` in a loop. **DEV** (`npm run dev` / Lynx Go): `require()` inlines a `data:` URI so the font shows up in Explorer. **PROD** (`npm run build` / APK): `asset:///fonts/<file>` resolved by `AssetFontFaceLoader` on the host (keeps the bundle small — embedding `data:` URIs in the APK re-introduces the cold-start cost tracked in [lynx#9431](https://github.com/lynx-family/lynx/issues/9431)). Comma-separate for more than one file. |
 | `--find-font <term>` | Search [Fontsource](https://fontsource.org)'s catalog for `<term>`, prompt you to pick a family and one or more weights/styles, download each `.ttf`, and bundle them exactly like `--with-font`. Needs a real terminal (the picking is inherently interactive — use `--with-font <file.ttf>` in scripts/CI). Mutually exclusive with `--with-font`. Comma-separate terms for more than one — quote the whole thing if any term has a space. |
 | `--font-family <name>` | Override the family name derived from the font's file name (or from Fontsource, with `--find-font`). Only valid with exactly one font. |
@@ -130,6 +144,11 @@ see them together with the post-scaffold commands below.
 `--android-id` and `--app-name` configure the host when one is generated.
 `--android-plugins` and the font flags imply `--android`; `--with-ui` works
 with or without the Android host.
+
+During interactive Android setup, the CLI asks whether to add fonts. If you
+choose yes, search Fontsource, select a family and its variants, then choose
+whether to add another font. The setup continues after you answer no. The
+`--find-font` flag remains available for scripted scaffolding.
 
 ### Commands for an existing project
 
@@ -224,7 +243,7 @@ The sibling `<name>-android/` project is a complete, no-Android-Studio Gradle CL
 - `local.properties` with `sdk.dir` auto-detected from `ANDROID_HOME`/`ANDROID_SDK_ROOT` (with a written warning if it can't be found);
 - the Kotlin host: the `Application` (registers `AssetFontFaceLoader`), `MainActivity` (async `AssetTemplateProvider`, splash screen, `NoopGenericResourceFetcher` for the fast `data:` font path — [lynx#9431](https://github.com/lynx-family/lynx/issues/9431)), and a predefined native bridge for `mithril-lynx/route`'s Android system Back support;
 - a project-local `android/` folder with editable `AndroidManifest.xml`, `strings.xml`, `styles.xml`, `config.xml`, `network_security_config.xml`, and `file_paths.xml`, plus `bun run android:prepare` to copy them into the Gradle host;
-- opt-in Maven Central connectors for battery, camera, device, geolocation, network, vibration, and maps, each registered only when selected with `--android-plugins`;
+- opt-in Maven Central connectors for battery, camera, device, geolocation, network, vibration, maps, and SQLite, each registered only when selected with `--android-plugins`;
 - an opt-in release signing setup driven by a gitignored `keystore.properties`.
 
 And in the JS project, a `scripts/android.mjs` bridge plus npm scripts:

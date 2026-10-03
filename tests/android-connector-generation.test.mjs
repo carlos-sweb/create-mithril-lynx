@@ -57,11 +57,65 @@ test("scaffolding emits only the connector callbacks in use", () => {
 		[["camera"], { registered: true, permission: false, activity: true }],
 		[["geolocation"], { registered: true, permission: true, activity: false }],
 		[["maps"], { registered: true, permission: true, activity: false }],
+		[["sqlite"], { registered: true, permission: false, activity: false }],
 		[["camera", "geolocation", "maps"], { registered: true, permission: true, activity: true }],
 		[["all"], { registered: true, permission: true, activity: true }],
 	]) {
-		assertCallbacks(scaffold(plugins), callbacks);
+		const project = scaffold(plugins);
+		assertCallbacks(project, callbacks);
+		const dependencies = read(project.gradle).match(/implementation\("io\.github\.carlos-sweb:lynx-android-[^"]+"\)/g) ?? [];
+		assert.equal(dependencies.length, plugins.includes("all") ? 1 : plugins.length);
+		for (const dependency of dependencies) assert.match(dependency, /:0\.4\.0"\)/);
 	}
+});
+
+test("SQLite uses its own Maven artifact without Activity callbacks", () => {
+	const project = scaffold(["sqlite"]);
+	assert.match(read(project.gradle), /lynx-android-sqlite:0\.4\.0/);
+	assert.match(read(project.registry), /LynxSqlitePlugin\.register\(builder\)/);
+	assertCallbacks(project, { registered: true, permission: false, activity: false });
+});
+
+test("SQLite can be added and removed after scaffolding", () => {
+	const project = scaffold(["battery"]);
+	run(["add-android-plugin", "sqlite", "--no-install"], project.app);
+	assert.match(read(project.gradle), /lynx-android-battery:0\.4\.0/);
+	assert.match(read(project.gradle), /lynx-android-sqlite:0\.4\.0/);
+	assert.match(read(project.registry), /LynxSqlitePlugin\.register\(builder\)/);
+	run(["remove-android-plugin", "sqlite", "--no-install"], project.app);
+	assert.doesNotMatch(read(project.gradle), /lynx-android-sqlite/);
+	assert.doesNotMatch(read(project.registry), /LynxSqlitePlugin/);
+	assertCallbacks(project, { registered: true, permission: false, activity: false });
+});
+
+test("refreshing an existing aggregate host upgrades its Maven coordinate", () => {
+	for (const version of ["0.2.0", "0.3.0"]) {
+		const project = scaffold(["all"]);
+		writeFileSync(project.gradle, read(project.gradle).replace("lynx-android-plugins:0.4.0", `lynx-android-plugins:${version}`));
+		run(["add-android-plugin", "all", "--no-install"], project.app);
+		assert.match(read(project.gradle), /lynx-android-plugins:0\.4\.0/);
+		assertCallbacks(project, { registered: true, permission: true, activity: true });
+	}
+});
+
+test("refreshing individual connectors upgrades their historical Maven versions", () => {
+	const project = scaffold(["battery", "sqlite"]);
+	writeFileSync(project.gradle, read(project.gradle)
+		.replace("lynx-android-battery:0.4.0", "lynx-android-battery:0.2.0")
+		.replace("lynx-android-sqlite:0.4.0", "lynx-android-sqlite:0.3.0"));
+	run(["add-android-plugin", "camera", "--no-install"], project.app);
+	for (const name of ["battery", "sqlite", "camera"]) {
+		assert.ok(read(project.gradle).includes(`lynx-android-${name}:0.4.0`));
+	}
+});
+
+test("a custom Maven version blocks upgrades before any file changes", () => {
+	const project = scaffold(["battery"]);
+	writeFileSync(project.gradle, read(project.gradle).replace("lynx-android-battery:0.4.0", "lynx-android-battery:9.0.0"));
+	const files = [project.main, project.registry, project.gradle, project.config, project.packageJson];
+	const before = files.map(read);
+	run(["add-android-plugin", "camera", "--no-install"], project.app, 1);
+	assert.deepEqual(files.map(read), before);
 });
 
 test("add and remove update both Kotlin files, including the last connector", () => {

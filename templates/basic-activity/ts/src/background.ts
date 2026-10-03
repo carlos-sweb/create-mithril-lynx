@@ -34,7 +34,11 @@ declare const module: {
 		accept(path: string, callback: () => void): void;
 	};
 };
-declare const require: (id: string) => unknown;
+// Overloads: HMR reloads the two screen modules; DEV font registration
+// prepended by --with-font/--find-font requires .ttf paths as string URLs.
+declare function require(id: "./screens/home.js"): typeof homeModule;
+declare function require(id: "./screens/detail.js"): typeof detailModule;
+declare function require(id: string): string;
 
 if (module.hot) {
 	module.hot.accept("./screens/home.js", () => {
