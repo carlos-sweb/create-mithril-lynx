@@ -1,1 +1,6 @@
 node_modules/
+tmp/
+c.bash
+sql.md
+node_modules/
+dist/
