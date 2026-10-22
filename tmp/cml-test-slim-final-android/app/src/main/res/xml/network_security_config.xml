@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The generated manifest references this resource. It deliberately matches the
+  previous host default (cleartext allowed) so existing local HTTP workflows do
+  not change. Restrict this before a production release when possible.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

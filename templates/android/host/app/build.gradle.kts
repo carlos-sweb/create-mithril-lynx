@@ -48,6 +48,7 @@ android {
         }
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -72,18 +73,14 @@ dependencies {
     // The core artifact — LynxView, LynxViewBuilder, the layout engine, etc.
     implementation("org.lynxsdk.lynx:lynx:4.1.0")
 
-    // OPT-IN: add these only if you use those elements, but they cost little
-    // and without them the failure is silent (the element mounts and never
-    // responds), so the scaffold ships them.
-
-    // <input>/<textarea> — without this those elements take up zero size and
-    // never open the keyboard. XElementBehaviors is registered in MainActivity.kt.
-    implementation("org.lynxsdk.lynx:xelement:4.1.0")
-    implementation("org.lynxsdk.lynx:xelement-input:4.1.0")
-
-    // <overlay> — without this the element mounts without error but is never
-    // visible (mithril-lynx-ui's Dialog/Sheet/Popover need it).
-    implementation("org.lynxsdk.lynx:xelement-overlay:4.1.0")
+    // XElements are opt-in. The aggregate xelement artifact brings native
+    // implementations for WebView, video, refresh, animax and more, so a
+    // Blank app should not pay their cold-start and APK-size cost by default.
+    // If you use <input> or <textarea>, add these two dependencies and restore
+    // `builder.addBehaviors(XElementBehaviors().create())` in MainActivity:
+    // implementation("org.lynxsdk.lynx:xelement:4.1.0")
+    // implementation("org.lynxsdk.lynx:xelement-input:4.1.0")
+    // Add xelement-overlay only when rendering <overlay> components.
 
     // Without a registered ILynxLogService, console.log() and JS errors from
     // the bundle are dropped silently — not even logcat shows them. Remove it
@@ -91,12 +88,8 @@ dependencies {
     // build.
     implementation("org.lynxsdk.lynx:lynx-service-log:4.1.0")
 
-    // <refresh> (pull-to-refresh, inside the xelement artifact) internally
-    // depends on SmartRefreshLayout, whose touch-dispatch code references
-    // ViewPager2 even though you don't use it — without this, every touch on a
-    // <refresh> throws NoClassDefFoundError (caught by the engine, but the
-    // gesture then never works).
-    implementation("androidx.viewpager2:viewpager2:1.1.0")
+    // If you use xelement <refresh>, also add:
+    // implementation("androidx.viewpager2:viewpager2:1.1.0")
 
     // <create-mithril-lynx:android-connectors>
 {{ANDROID_PLUGIN_DEPENDENCIES}}

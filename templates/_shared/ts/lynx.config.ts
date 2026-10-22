@@ -21,9 +21,9 @@ export default defineConfig({
       root: path.join(projectRoot, "dist"),
     },
     filename: "[name].bundle",
-    // Lynx bundles are self-contained — image imports must be inlined as
-    // data URIs rather than left as separate file references.
-    dataUriLimit: Infinity,
+    // Keep large raster assets out of the JS bundle. Android assets can be
+    // loaded by path, while only tiny images are worth inlining as data URIs.
+    dataUriLimit: 4096,
   },
   plugins: [
     pluginMithrilLynx(),

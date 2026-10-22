@@ -32,6 +32,22 @@ npm install
 npm run android          # bundle -> assets -> installDebug -> launch on the device
 ```
 
+### Performance & Splash Screen
+
+Generated Android hosts render Mithril on `MULTI_THREADS` and use a hybrid
+native splash: the Android system splash hands off to a matching native
+placeholder while Lynx prepares its first frame, then fades out safely. This
+avoids a blank or frozen-looking launch without delaying the UI thread.
+
+For fast starts, keep initial JavaScript small. Avoid bringing heavy libraries
+such as Zod or Numeral into the initial route when a small JavaScript validator
+or deterministic formatting helper is enough. The generated `lynx.config.ts`
+sets `dataUriLimit: 4096`, so large images stay out of the JavaScript bundle.
+
+> Rendimiento: los builds Debug no representan el rendimiento de producto. Mide arranques en frío y tamaño de APK sólo con `npm run android:release` firmado; Debug conserva instrumentación y desoptimización adicionales.
+
+> Android permite `usesCleartextTraffic="true"` para desarrollo local. Desactívalo antes de publicar si la app no requiere HTTP.
+
 ### With Android connectors
 
 Android projects can opt into the published

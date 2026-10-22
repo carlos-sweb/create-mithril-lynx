@@ -1,16 +1,27 @@
 package {{PACKAGE_NAME}}
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import android.widget.FrameLayout
+import android.widget.ImageView
 // <create-mithril-lynx:connector-imports>
 // </create-mithril-lynx:connector-imports>
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.lynx.react.bridge.JavaOnlyArray
 import com.lynx.tasm.LynxBooleanOption
 import com.lynx.tasm.LynxViewBuilder
+import com.lynx.tasm.LynxViewClientV2
 import com.lynx.tasm.ThreadStrategyForRendering
-import com.lynx.xelement.XElementBehaviors
+import com.lynx.tasm.performance.performanceobserver.PerformanceEntry
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : AppCompatActivity() {
     private var backCallback: OnBackPressedCallback? = null
@@ -21,11 +32,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val builder = LynxViewBuilder()
-        // <input>/<textarea> are opt-in "xelement" components, not part of the
-        // core artifact: without this they measure 0 and never open the
-        // keyboard. Remove this line (and the xelement dependencies) if you
-        // don't use them.
-        builder.addBehaviors(XElementBehaviors().create())
         // Lets mithril-lynx/route tell Android when its in-memory history can
         // handle Back. See MithrilLynxNavigationModule and the callback below.
         builder.registerModule("MithrilLynxNavigationModule", MithrilLynxNavigationModule::class.java)
@@ -40,13 +46,90 @@ class MainActivity : AppCompatActivity() {
         // https://github.com/lynx-family/lynx/issues/9431
         builder.setEnableGenericResourceFetcher(LynxBooleanOption.TRUE)
         builder.setGenericResourceFetcher(NoopGenericResourceFetcher())
-        builder.setThreadStrategyForRendering(ThreadStrategyForRendering.ALL_ON_UI)
+        // Production rendering keeps Mithril/JS work off Android's UI thread.
+        builder.setThreadStrategyForRendering(ThreadStrategyForRendering.MULTI_THREADS)
         // Reads the bundle from assets on a separate thread — see
         // AssetTemplateProvider's comment: reading it synchronously here cost
         // 2.4-2.8s of cold start measured on a real device, vs ~300ms with this.
         builder.setTemplateProvider(AssetTemplateProvider(this))
         val lynxView = builder.build(this)
-        setContentView(lynxView)
+        val rootLayout = FrameLayout(this)
+        rootLayout.addView(
+            lynxView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+
+        // Continue the system splash in-process until Lynx has rendered its
+        // first real frame. Its geometry matches Theme.SplashScreen exactly:
+        // a 288dp canvas and FIT_CENTER for an icon without IconBackground.
+        val placeholderView = FrameLayout(this).apply {
+            setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.splash_background))
+            isClickable = true
+            isFocusable = true
+        }
+        val iconSizePx = (288 * resources.displayMetrics.density).toInt()
+        placeholderView.addView(
+            ImageView(this).apply {
+                setImageResource(R.drawable.ic_launcher_foreground)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = null
+            },
+            FrameLayout.LayoutParams(iconSizePx, iconSizePx, Gravity.CENTER),
+        )
+        rootLayout.addView(
+            placeholderView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        setContentView(rootLayout)
+
+        val mainHandler = Handler(Looper.getMainLooper())
+        val firstDrawObserved = AtomicBoolean(false)
+        val performanceObserved = AtomicBoolean(false)
+        val placeholderRemovalStarted = AtomicBoolean(false)
+        lateinit var earlyTimeout: Runnable
+        lateinit var absoluteTimeout: Runnable
+
+        fun removePlaceholder() {
+            if (!placeholderRemovalStarted.compareAndSet(false, true)) return
+            mainHandler.removeCallbacks(earlyTimeout)
+            mainHandler.removeCallbacks(absoluteTimeout)
+            placeholderView.animate()
+                .alpha(0f)
+                .setDuration(120)
+                .withEndAction { placeholderView.visibility = View.GONE }
+                .start()
+        }
+
+        earlyTimeout = Runnable(::removePlaceholder)
+        absoluteTimeout = Runnable(::removePlaceholder)
+        mainHandler.postDelayed(absoluteTimeout, 2_000)
+
+        lynxView.viewTreeObserver.addOnDrawListener(object : ViewTreeObserver.OnDrawListener {
+            override fun onDraw() {
+                if (!firstDrawObserved.compareAndSet(false, true)) return
+                lynxView.post { lynxView.viewTreeObserver.removeOnDrawListener(this) }
+                if (performanceObserved.get()) {
+                    removePlaceholder()
+                } else {
+                    mainHandler.postDelayed(earlyTimeout, 300)
+                }
+            }
+        })
+        lynxView.addLynxViewClientV2(object : LynxViewClientV2() {
+            override fun onPerformanceEvent(entry: PerformanceEntry) {
+                if (entry.entryType != "pipeline" && entry.name != "loadBundle") return
+                performanceObserved.set(true)
+                if (firstDrawObserved.get()) {
+                    mainHandler.post(::removePlaceholder)
+                }
+            }
+        })
 
         // Disabled until route.listenBackButton() reports that JS has an
         // in-app history entry. When disabled, Android's normal Back behavior
