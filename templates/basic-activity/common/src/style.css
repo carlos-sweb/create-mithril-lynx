@@ -1,37 +1,73 @@
-:root {
-  background-color: #fff;
+:root,
+.theme-light {
+  --bg-app: #F3F4EF;
+  --bg-surface: #FFFFFF;
+  --text-primary: #29332C;
+  --text-secondary: #69736B;
+  --brand-primary: #6200ee;
+  --on-brand: #FFFFFF;
+  background-color: var(--bg-app);
+}
+
+.theme-dark {
+  --bg-app: #121212;
+  --bg-surface: #1E1E1E;
+  --text-primary: #E0E0E0;
+  --text-secondary: #A0A0A0;
+  --brand-primary: #3700b3;
+  --on-brand: #FFFFFF;
 }
 
 .Page {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: var(--bg-app);
 }
 
 .AppBar {
   height: 56px;
   display: flex;
+  flex-direction: row;
   align-items: center;
+  justify-content: space-between;
   padding: 0 16px;
-  background-color: #6200ee;
+  background-color: var(--brand-primary);
 }
 
 .AppBar-back {
   font-size: 22px;
   font-weight: 700;
-  color: #fff;
+  color: var(--on-brand);
   margin-right: 16px;
   padding: 4px 8px;
 }
 
 .AppBar-title {
+  flex-grow: 1;
+  flex-shrink: 1;
+  flex-basis: auto;
   font-size: 20px;
   font-weight: 600;
-  color: #fff;
+  color: var(--on-brand);
+}
+
+.AppBar-themeToggle {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background-color: var(--bg-surface);
+}
+
+.AppBar-themeToggle-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .Content {
-  flex: 1;
+  flex-grow: 1;
+  flex-shrink: 1;
+  flex-basis: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -41,19 +77,20 @@
 
 .Description {
   font-size: 16px;
-  color: #333;
+  color: var(--text-primary);
   text-align: center;
   margin-bottom: 24px;
 }
 
 .Button {
   padding: 12px 24px;
+  margin-bottom: 12px;
   border-radius: 8px;
-  background-color: #6200ee;
+  background-color: var(--brand-primary);
 }
 
 .Button-label {
-  color: #fff;
+  color: var(--on-brand);
   font-size: 16px;
   font-weight: 600;
 }

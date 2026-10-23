@@ -1,5 +1,7 @@
 package {{PACKAGE_NAME}}
 
+import android.content.Context
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -13,12 +15,12 @@ import android.widget.ImageView
 // </create-mithril-lynx:connector-imports>
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.lynx.react.bridge.JavaOnlyArray
 import com.lynx.tasm.LynxBooleanOption
 import com.lynx.tasm.LynxViewBuilder
 import com.lynx.tasm.LynxViewClientV2
+import com.lynx.tasm.TemplateData
 import com.lynx.tasm.ThreadStrategyForRendering
 import com.lynx.tasm.performance.performanceobserver.PerformanceEntry
 import java.util.concurrent.atomic.AtomicBoolean
@@ -35,6 +37,7 @@ class MainActivity : AppCompatActivity() {
         // Lets mithril-lynx/route tell Android when its in-memory history can
         // handle Back. See MithrilLynxNavigationModule and the callback below.
         builder.registerModule("MithrilLynxNavigationModule", MithrilLynxNavigationModule::class.java)
+        builder.registerModule("PreferencesModule", PreferencesModule::class.java)
         // <create-mithril-lynx:connector-registration>
         // </create-mithril-lynx:connector-registration>
         // lynx-family/lynx's own explorer/android registers a
@@ -52,8 +55,20 @@ class MainActivity : AppCompatActivity() {
         // AssetTemplateProvider's comment: reading it synchronously here cost
         // 2.4-2.8s of cold start measured on a real device, vs ~300ms with this.
         builder.setTemplateProvider(AssetTemplateProvider(this))
+        val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
+        val savedTheme = prefs.getString("theme", "light") ?: "light"
+        val globalProps = mapOf("theme" to savedTheme)
+        val initialBgColor = if (savedTheme == "dark") {
+            Color.rgb(0x12, 0x12, 0x12)
+        } else {
+            Color.rgb(0xF3, 0xF4, 0xEF)
+        }
         val lynxView = builder.build(this)
-        val rootLayout = FrameLayout(this)
+        lynxView.setBackgroundColor(initialBgColor)
+        lynxView.updateGlobalProps(TemplateData.fromMap(globalProps))
+        val rootLayout = FrameLayout(this).apply {
+            setBackgroundColor(initialBgColor)
+        }
         rootLayout.addView(
             lynxView,
             FrameLayout.LayoutParams(
@@ -66,7 +81,7 @@ class MainActivity : AppCompatActivity() {
         // first real frame. Its geometry matches Theme.SplashScreen exactly:
         // a 288dp canvas and FIT_CENTER for an icon without IconBackground.
         val placeholderView = FrameLayout(this).apply {
-            setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.splash_background))
+            setBackgroundColor(initialBgColor)
             isClickable = true
             isFocusable = true
         }

@@ -1,5 +1,19 @@
-:root {
-  background-color: #fff;
+:root,
+.theme-light {
+  --bg-app: #F3F4EF;
+  --bg-surface: #FFFFFF;
+  --text-primary: #29332C;
+  --brand-primary: #45634D;
+  --on-brand: #FFFFFF;
+  background-color: var(--bg-app);
+}
+
+.theme-dark {
+  --bg-app: #121212;
+  --bg-surface: #1E1E1E;
+  --text-primary: #E0E0E0;
+  --brand-primary: #6B8E73;
+  --on-brand: #FFFFFF;
 }
 
 .Page {
@@ -8,9 +22,24 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  background-color: var(--bg-app);
 }
 
 .Title {
   font-size: 24px;
   font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.ThemeButton {
+  padding: 12px 20px;
+  border-radius: 10px;
+  background-color: var(--brand-primary);
+}
+
+.ThemeButton-label {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--on-brand);
 }

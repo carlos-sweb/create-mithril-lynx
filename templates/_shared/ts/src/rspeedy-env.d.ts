@@ -8,6 +8,10 @@ declare module "@lynx-js/types" {
 		MithrilLynxNavigationModule?: {
 			setCanGoBack(canGoBack: boolean): void;
 		};
+		PreferencesModule?: {
+			getTheme(): string;
+			setTheme(theme: string): void;
+		};
 		LynxBatteryPlugin?: { getStatus(requestId: string): void };
 		LynxCameraPlugin?: { takePhoto(requestId: string): void };
 		LynxDevicePlugin?: { getInfo(requestId: string): void };

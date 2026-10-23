@@ -1,4 +1,5 @@
 import m from "mithril-runtime";
+import { isDarkMode, toggleTheme } from "./data/theme-store.js";
 
 // A reusable app bar: a title, plus a back affordance when `onBack` is
 // given. No m.route.Link involved for this on-screen affordance: it calls
@@ -8,5 +9,19 @@ export function AppBar(title: string, onBack?: () => void) {
 	return m("view", { class: "AppBar" }, [
 		onBack != null ? m("text", { class: "AppBar-back", ontap: onBack }, "←") : null,
 		m("text", { class: "AppBar-title" }, title),
+		m(
+			"view",
+			{
+				class: "AppBar-themeToggle",
+				ontap: () => toggleTheme(),
+			},
+			[
+				m(
+					"text",
+					{ class: "AppBar-themeToggle-label" },
+					isDarkMode() ? "Claro" : "Oscuro",
+				),
+			],
+		),
 	]);
 }
